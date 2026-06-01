@@ -4,7 +4,6 @@ import {
   EventName,
   Contract,
   SecType,
-  Currency,
 } from '@stoqey/ib';
 import { logger } from '../utils/logger';
 import { settingsStore } from './settings';
@@ -105,7 +104,7 @@ export class MarketScanner extends EventEmitter {
     const contract: Contract = {
       symbol,
       secType: SecType.STK,
-      currency: Currency.USD,
+      currency: 'USD',
       exchange: 'SMART',
     };
 
@@ -192,14 +191,34 @@ export class MarketScanner extends EventEmitter {
 }
 
 /**
- * Known float sizes (millions) for common low-float micro-caps.
- * Add/update as needed — anything not listed defaults to 15M.
+ * Known float sizes (millions) for low-float micro-cap universe.
+ * Anything not listed defaults to 15M.
  */
 const FLOAT_MAP: Record<string, number> = {
-  CLOV: 9.2,  ATER: 3.1,  PROG: 4.8,  BBIG: 6.7,  EXPR: 5.3,
-  MRIN: 2.4,  PHUN: 3.8,  VVPR: 1.2,  GFAI: 5.1,  SOPA: 1.8,
-  MULN: 8.9,  EEIQ: 2.0,  CLPS: 4.4,  CLRB: 3.6,  BLNK: 7.1,
-  ENVB: 1.5,  NILE: 2.2,  ABIO: 1.9,  TTOO: 3.3,  GOVX: 4.0,
+  // Biotech / Pharma
+  ABIO: 1.9,  ACST: 2.1,  ACER: 3.0,  ADXN: 4.2,  AEZS: 2.8,
+  AGRI: 1.4,  ALDX: 3.5,  APRE: 2.0,  ARDX: 5.1,  ARMP: 1.6,
+  ATXI: 1.2,  BNGO: 8.5,  BNTC: 1.8,  BPMC: 6.0,  BRTX: 1.1,
+  CASI: 4.3,  CBAT: 3.9,  CLRB: 3.6,  CLOV: 9.2,  CNSP: 2.5,
+  CRBP: 5.8,  CTXR: 2.3,  CYTH: 1.7,  EDSA: 1.3,  ENVB: 1.5,
+  EYEG: 1.0,  FREQ: 4.7,  FSTX: 3.2,  GFAI: 5.1,  GOVX: 4.0,
+  HALO: 7.2,  HGEN: 3.8,  IDRA: 4.1,  IMVT: 6.3,  INVO: 1.9,
+  IQST: 2.6,  JAGX: 3.4,  KPTI: 5.5,  LGND: 7.8,  LPCN: 2.2,
+  // Tech / EV / Fintech
+  ABVC: 1.5,  ATER: 3.1,  BBIG: 6.7,  BLNK: 7.1,  BRDS: 2.9,
+  CCTG: 1.3,  CLPS: 4.4,  CODA: 2.1,  DPRO: 3.7,  EEIQ: 2.0,
+  EFTR: 1.8,  ESSC: 2.4,  EXPR: 5.3,  EZFL: 1.6,  FCEL: 8.0,
+  FFIE: 9.1,  GREE: 4.6,  IDEX: 7.3,  IMTX: 3.0,  IONQ: 8.8,
+  ITRM: 2.7,  KAVL: 1.4,  LMFA: 1.1,  MRIN: 2.4,  MULN: 8.9,
+  MVIS: 6.9,  NILE: 2.2,  NKLA: 9.5,  NNOX: 5.6,  NVAX: 7.4,
+  // Commodities / Mining / Energy
+  ABTI: 1.2,  AKBA: 3.3,  AMMO: 5.7,  ATNF: 2.0,  BMTM: 1.5,
+  CHNR: 2.8,  CMMB: 1.9,  COUP: 4.0,  CPHI: 2.6,  DPSI: 1.7,
+  EAST: 1.3,  ELOX: 2.3,  GALT: 3.1,  HCDI: 1.8,  HLTH: 4.5,
+  HYAC: 2.1,  IFBD: 1.6,  IMAQ: 2.0,  JFIN: 1.4,  JTAI: 1.1,
+  // Misc low-float movers
+  PHUN: 3.8,  PROG: 4.8,  SOPA: 1.8,  TTOO: 3.3,  VVPR: 1.2,
+  SEED: 3.5,  KALI: 2.0,  MARPS: 1.3, LAKE: 4.1,  WISA: 1.8,
 };
 
 /** Default watchlist — edit freely or set via agent.setWatchlist(). */

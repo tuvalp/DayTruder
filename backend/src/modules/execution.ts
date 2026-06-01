@@ -6,7 +6,6 @@ import {
   OrderAction,
   OrderType as IBOrderType,
   SecType,
-  Currency,
   TimeInForce,
 } from '@stoqey/ib';
 import { v4 as uuidv4 } from 'uuid';
@@ -60,7 +59,7 @@ export class ExecutionModule {
     const contract: Contract = {
       symbol,
       secType: SecType.STK,
-      currency: Currency.USD,
+      currency: 'USD',
       exchange: 'SMART',
     };
 
@@ -164,7 +163,7 @@ export class ExecutionModule {
     const contract: Contract = {
       symbol,
       secType: SecType.STK,
-      currency: Currency.USD,
+      currency: 'USD',
       exchange: 'SMART',
     };
 
