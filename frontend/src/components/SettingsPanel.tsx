@@ -21,7 +21,7 @@ interface FieldDef {
 
 const FIELDS: FieldDef[] = [
   // Risk
-  { key: 'maxRiskPerTradePct',  label: 'Max Risk / Trade',      min: 0.1,  max: 5,    step: 0.1, unit: '%',  section: 'risk',    description: 'Max % of account risked on a single trade' },
+  { key: 'maxRiskPerTradePct',  label: 'Max Risk / Trade',      min: 0.1,  max: 100,  step: 0.1, unit: '%',  section: 'risk',    description: 'Max % of account risked on a single trade' },
   { key: 'stopLossPct',         label: 'Stop-Loss',             min: 1,    max: 15,   step: 0.5, unit: '%',  section: 'risk',    description: 'Hard stop-loss below entry price' },
   { key: 'maxOpenPositions',    label: 'Max Open Positions',    min: 1,    max: 20,   step: 1,   unit: '',   section: 'risk',    description: 'Maximum simultaneous open positions' },
   { key: 'maxDailyLossPct',     label: 'Daily Loss Limit',      min: 1,    max: 20,   step: 0.5, unit: '%',  section: 'risk',    description: 'Circuit-breaker trips when daily loss hits this' },

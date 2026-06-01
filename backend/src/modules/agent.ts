@@ -87,7 +87,7 @@ export class AlphaAgent extends EventEmitter {
 
     // Polygon screener drives the entire watchlist — polls every 30 s for today's movers
     this.screener.start((results) => {
-      this.scanner.ingestSymbols(results.map((r) => ({ symbol: r.symbol, float: r.float })));
+      this.scanner.ingestSymbols(results.map((r) => ({ symbol: r.symbol, float: r.float, price: r.price })));
     });
 
     this.syncInterval = setInterval(() => this.syncAndEmit(), 5000);

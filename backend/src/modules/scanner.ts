@@ -36,6 +36,7 @@ export class MarketScanner extends EventEmitter {
   private symbolLastSeen = new Map<string, number>();   // ts of last Polygon mention
   private nextReqId = 100;
   private running = false;
+  private watchlistThrottle: NodeJS.Timeout | null = null;
 
   constructor(ib: IBApi) {
     super();
@@ -67,14 +68,14 @@ export class MarketScanner extends EventEmitter {
    * Subscribes to new symbols and unsubscribes symbols that have
    * dropped off the screener for more than 2 consecutive polls.
    */
-  ingestSymbols(symbols: { symbol: string; float?: number }[]) {
+  ingestSymbols(symbols: { symbol: string; float?: number; price?: number }[]) {
     const now = Date.now();
 
     // Mark each incoming symbol as seen
-    for (const { symbol, float } of symbols) {
+    for (const { symbol, float, price } of symbols) {
       this.symbolLastSeen.set(symbol, now);
       if (!this.symbolToReqId.has(symbol)) {
-        this.subscribe(symbol, float);
+        this.subscribe(symbol, float, price);
       } else if (float) {
         // Update float if screener provided a value
         const state = this.tickState.get(symbol);
@@ -100,10 +101,19 @@ export class MarketScanner extends EventEmitter {
   /** Called by the agent to update the pipeline stage for a symbol. */
   setStrategy(symbol: string, strategy: SymbolStrategy) {
     const state = this.tickState.get(symbol);
-    if (state) { state.strategy = strategy; this.emitWatchlist(); }
+    if (state) { state.strategy = strategy; this._doEmitWatchlist(); }
   }
 
   private emitWatchlist() {
+    // Throttle: emit at most once per second to avoid flooding the socket
+    if (this.watchlistThrottle) return;
+    this.watchlistThrottle = setTimeout(() => {
+      this.watchlistThrottle = null;
+      this._doEmitWatchlist();
+    }, 1000);
+  }
+
+  private _doEmitWatchlist() {
     const entries: WatchlistEntry[] = [];
     for (const [symbol, state] of this.tickState.entries()) {
       if (state.lastPrice === 0) continue;
@@ -132,7 +142,7 @@ export class MarketScanner extends EventEmitter {
 
   // ── Internal ──────────────────────────────────────────────────────────────
 
-  private subscribe(symbol: string, float?: number) {
+  private subscribe(symbol: string, float?: number, seedPrice?: number) {
     const reqId = this.nextReqId++;
     this.symbolToReqId.set(symbol, reqId);
     this.reqIdToSymbol.set(reqId, symbol);
@@ -141,8 +151,8 @@ export class MarketScanner extends EventEmitter {
       volumes: [],
       avgVolume: 0,
       float: float ?? 15,
-      lastPrice: 0,
-      openPrice: 0,
+      lastPrice: seedPrice ?? 0,
+      openPrice: seedPrice ?? 0,   // seed from screener so % change is meaningful immediately
       strategy: 'watching',
     });
 
