@@ -7,12 +7,13 @@ import { PerformanceChart } from './components/PerformanceChart';
 import { PositionsTable } from './components/PositionsTable';
 import { AgentTerminal } from './components/AgentTerminal';
 import { SettingsPanel } from './components/SettingsPanel';
+import { WatchlistCard } from './components/WatchlistCard';
 import { fmt } from './utils/format';
 
 type Tab = 'dashboard' | 'settings';
 
 export default function App() {
-  const { connected, agentState, portfolio, performance, logs, settings, startAgent, pauseAgent, updateSettings } =
+  const { connected, agentState, portfolio, performance, logs, settings, watchlist, startAgent, pauseAgent, updateSettings } =
     useSocket();
 
   const [tab, setTab] = useState<Tab>('dashboard');
@@ -76,6 +77,9 @@ export default function App() {
                 sub={`${portfolio?.openPositions.length ?? 0} open · max ${settings.maxOpenPositions}`}
                 positive={(portfolio?.activeRiskMultiplier ?? 1) > 0.7 ? true : false}
               />
+            </div>
+            <div className="shrink-0">
+              <WatchlistCard symbols={watchlist} />
             </div>
             <div className="shrink-0">
               <PerformanceChart data={performance} />

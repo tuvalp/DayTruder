@@ -92,6 +92,8 @@ export class MarketScanner extends EventEmitter {
       'scanner',
       `Watchlist: ${this.symbolToReqId.size} active symbols | +${symbols.length} from screener`
     );
+
+    this.emit('watchlist', Array.from(this.symbolToReqId.keys()));
   }
 
   // ── Internal ──────────────────────────────────────────────────────────────

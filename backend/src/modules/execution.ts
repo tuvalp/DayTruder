@@ -210,7 +210,6 @@ export class ExecutionModule {
         this.ib.cancelAccountSummary(reqId);
         clearTimeout(timer);
         const liquidity = parseFloat(value);
-        logger.success('execution', `Net liquidity: $${liquidity.toLocaleString()}`);
         resolve(liquidity);
       };
       this.ib.on(EventName.accountSummary, handler);

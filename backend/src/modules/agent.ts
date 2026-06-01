@@ -23,10 +23,12 @@ export class AlphaAgent extends EventEmitter {
   private risk: RiskEngine;
   private execution: ExecutionModule;
 
+  private lastLiquidityFetch: number | null = null;
   private state: AgentState = 'idle';
   private syncInterval: NodeJS.Timeout | null = null;
   private performanceHistory: PerformanceDataPoint[] = [];
   private startingLiquidity = 0;
+  private cachedLiquidity = 0;
   private ibConnected = false;
 
   constructor() {
@@ -75,10 +77,12 @@ export class AlphaAgent extends EventEmitter {
 
     const liquidity = await this.execution.getAccountLiquidity();
     this.startingLiquidity = liquidity;
+    this.cachedLiquidity = liquidity;
     this.risk = new RiskEngine(liquidity);
     logger.success('system', `Account net liquidity: $${liquidity.toLocaleString()}`);
 
     this.scanner.on('alert', (alert: ScannerAlert) => this.handleAlert(alert));
+    this.scanner.on('watchlist', (symbols: string[]) => this.emit('watchlist', symbols));
     this.scanner.start();
 
     // Polygon screener drives the entire watchlist — polls every 30 s for today's movers
@@ -155,7 +159,18 @@ export class AlphaAgent extends EventEmitter {
   private async syncAndEmit() {
     const openPositions = this.execution.getOpenPositions();
     const dailyUnrealized = openPositions.reduce((s, p) => s + p.unrealizedPnl, 0);
-    const liquidity = await this.execution.getAccountLiquidity().catch(() => this.startingLiquidity);
+
+    // Refresh liquidity from IBKR every 60 s, not every 5 s — only log when it changes
+    const now = Date.now();
+    if (!this.lastLiquidityFetch || now - this.lastLiquidityFetch > 60_000) {
+      this.lastLiquidityFetch = now;
+      const fresh = await this.execution.getAccountLiquidity().catch(() => this.cachedLiquidity);
+      if (fresh !== this.cachedLiquidity) {
+        logger.info('system', `Net liquidity updated: $${fresh.toLocaleString()}`);
+        this.cachedLiquidity = fresh;
+      }
+    }
+    const liquidity = this.cachedLiquidity;
     this.risk.updateLiquidity(liquidity);
 
     const snapshot: PortfolioSnapshot = {

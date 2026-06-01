@@ -24,6 +24,7 @@ agent.on('portfolio', (s: PortfolioSnapshot) => io.emit('portfolio', s));
 agent.on('performance', (h: PerformanceDataPoint[]) => io.emit('performance', h));
 agent.on('state', (s: string) => io.emit('agentState', s));
 agent.on('trade', (p: unknown) => io.emit('trade', p));
+agent.on('watchlist', (symbols: string[]) => io.emit('watchlist', symbols));
 
 // Broadcast settings changes to all connected dashboards
 settingsStore.on('change', (s) => io.emit('settings', s));

@@ -31,6 +31,7 @@ export function useSocket() {
   const [performance, setPerformance] = useState<PerformanceDataPoint[]>([]);
   const [logs, setLogs] = useState<AgentLogEntry[]>([]);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [watchlist, setWatchlist] = useState<string[]>([]);
 
   useEffect(() => {
     const socket = io(BACKEND_URL, { transports: ['websocket'] });
@@ -42,6 +43,7 @@ export function useSocket() {
     socket.on('portfolio', (p: PortfolioSnapshot) => setPortfolio(p));
     socket.on('performance', (h: PerformanceDataPoint[]) => setPerformance(h));
     socket.on('settings', (s: AppSettings) => setSettings(s));
+    socket.on('watchlist', (s: string[]) => setWatchlist(s));
     socket.on('log', (entry: AgentLogEntry) =>
       setLogs((prev) => {
         const next = [...prev, entry];
@@ -58,5 +60,5 @@ export function useSocket() {
     socketRef.current?.emit('updateSettings', patch);
   }, []);
 
-  return { connected, agentState, portfolio, performance, logs, settings, startAgent, pauseAgent, updateSettings };
+  return { connected, agentState, portfolio, performance, logs, settings, watchlist, startAgent, pauseAgent, updateSettings };
 }
