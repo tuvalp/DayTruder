@@ -6,7 +6,6 @@ import {
   SecType,
   Currency,
   ScannerSubscription,
-  TagValue,
 } from '@stoqey/ib';
 import { logger } from '../utils/logger';
 import { settingsStore } from './settings';
@@ -61,10 +60,8 @@ export class MarketScanner extends EventEmitter {
       aboveVolume: 500_000,
       numberOfRows: 50,
     };
-    const filterOptions: TagValue[] = [
-      { tag: 'changePercAbove', value: s.minPriceSurgePct.toString() },
-    ];
-    this.ib.reqScannerSubscription(this.scanReqId, sub, [], filterOptions);
+    // filterOptions not supported via @stoqey/ib — surge % filtered in evaluate()
+    this.ib.reqScannerSubscription(this.scanReqId, sub, [], []);
     this.ib.on(EventName.scannerData, (_reqId, _rank, contractDetails) => {
       const symbol = contractDetails.contract.symbol!;
       if (!this.symbolToReqId.has(symbol)) this.subscribeToTicker(symbol, contractDetails.contract);

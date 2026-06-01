@@ -52,8 +52,10 @@ export class AlphaAgent extends EventEmitter {
     });
 
     this.ib.on(EventName.error, (_err, code, reqId) => {
-      // Code 2104/2106 are informational market data farm messages — ignore
-      if ([2104, 2106, 2158, 2119].includes(code)) return;
+      // Informational / transient codes — suppress
+      // 2104/2106/2158/2119 = market data farm connection notices
+      // 162 = scanner/historical pacing — harmless when filterOptions is empty
+      if ([162, 2104, 2106, 2158, 2119].includes(code)) return;
       logger.error('system', `IBKR error code ${code} (reqId ${reqId})`);
     });
   }
