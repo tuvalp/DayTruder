@@ -10,7 +10,7 @@ const ConfigSchema = z.object({
   // ── IBKR (TWS / IB Gateway must be running locally) ──────────────────────
   IBKR_HOST: z.string().default('127.0.0.1'),
   // Paper TWS=7497  Live TWS=7496  Paper Gateway=4002  Live Gateway=4001
-  IBKR_PORT: z.coerce.number().default(7497),
+  IBKR_PORT: z.coerce.number().default(7496),
   IBKR_CLIENT_ID: z.coerce.number().default(1),
   // Account number shown in TWS — e.g. DU1234567 (paper) or U1234567 (live)
   IBKR_ACCOUNT: z.string().min(1),
