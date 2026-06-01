@@ -8,6 +8,7 @@ import { PositionsTable } from './components/PositionsTable';
 import { AgentTerminal } from './components/AgentTerminal';
 import { SettingsPanel } from './components/SettingsPanel';
 import { WatchlistCard } from './components/WatchlistCard';
+import { ManualBuy } from './components/ManualBuy';
 import { fmt } from './utils/format';
 
 type Tab = 'dashboard' | 'settings';
@@ -83,6 +84,9 @@ export default function App() {
             </div>
             <div className="shrink-0">
               <PerformanceChart data={performance} />
+            </div>
+            <div className="shrink-0">
+              <ManualBuy />
             </div>
             <div className="flex-1 overflow-auto min-h-0">
               <PositionsTable positions={portfolio?.openPositions ?? []} />

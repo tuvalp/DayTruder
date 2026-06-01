@@ -216,27 +216,41 @@ export class MarketScanner extends EventEmitter {
   private evaluate(symbol: string, price: number, ts: number) {
     const s = settingsStore.get();
     const state = this.tickState.get(symbol);
-    if (!state || state.prices.length < 5) return;
+    if (!state || state.prices.length < 2) return;
     if (price < s.minPrice || price > s.maxPrice) return;
 
     const currentVol = state.volumes[state.volumes.length - 1] ?? 0;
     const relVol = state.avgVolume > 0 ? currentVol / state.avgVolume : 0;
 
+    // Primary: 1-minute tick-based surge (works with real-time data)
     const oneMinAgo = ts - 60_000;
     const pastTick = state.prices.findLast((p) => p.ts <= oneMinAgo);
-    const surgePct = pastTick ? ((price - pastTick.price) / pastTick.price) * 100 : 0;
+    const tickSurgePct = pastTick ? ((price - pastTick.price) / pastTick.price) * 100 : 0;
+
+    // Fallback: session % change from screener seed price (works with delayed data)
+    const sessionSurgePct = state.openPrice > 0
+      ? ((price - state.openPrice) / state.openPrice) * 100
+      : 0;
+
+    const surgePct = Math.max(tickSurgePct, sessionSurgePct);
 
     if (state.float >= s.maxFloatM) return;
-    if (relVol < s.minRelativeVolume) return;
     if (surgePct < s.minPriceSurgePct) return;
+
+    // For delayed data, RVOL won't accumulate properly — skip RVOL gate
+    // when we only have a handful of volume ticks
+    const rvolOk = state.volumes.length < 10 ? true : relVol >= s.minRelativeVolume;
+    if (!rvolOk) return;
 
     const lastAlert = this.alertCooldown.get(symbol) ?? 0;
     if (ts - lastAlert < 5 * 60_000) return;
     this.alertCooldown.set(symbol, ts);
 
     const triggerReasons = [
-      `RVOL ${relVol.toFixed(1)}×`,
-      `+${surgePct.toFixed(2)}% in 1 min`,
+      relVol > 0 ? `RVOL ${relVol.toFixed(1)}×` : 'Volume active',
+      tickSurgePct >= s.minPriceSurgePct
+        ? `+${tickSurgePct.toFixed(2)}% in 1 min`
+        : `+${sessionSurgePct.toFixed(2)}% today`,
       `Float ${state.float.toFixed(1)}M`,
     ];
 

@@ -120,6 +120,16 @@ export class AlphaAgent extends EventEmitter {
     });
   }
 
+  async handleManualBuy(symbol: string, price: number) {
+    const fakeAlert: ScannerAlert = {
+      symbol, price, priceChangePct: 0, volume: 0, relativeVolume: 0,
+      float: 10, marketCap: price * 10_000_000, timestamp: Date.now(),
+      triggerReasons: ['Manual trigger'],
+    };
+    logger.warn('system', `⚡ Manual pipeline trigger: ${symbol} @ $${price}`);
+    await this.handleAlert(fakeAlert);
+  }
+
   private async handleAlert(alert: ScannerAlert) {
     if (this.state === 'paused') return;
     if (this.risk.isCircuitBreakerActive) return;

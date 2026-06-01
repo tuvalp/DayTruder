@@ -47,6 +47,17 @@ app.patch('/settings', (req, res) => {
 });
 app.post('/settings/reset', (_req, res) => res.json(settingsStore.reset()));
 
+// Manual buy — bypasses scanner, goes straight into research → risk → execution
+app.post('/agent/manual-buy', async (req, res) => {
+  const { symbol, price } = req.body as { symbol: string; price: number };
+  if (!symbol || !price) { res.status(400).json({ error: 'symbol and price required' }); return; }
+  logger.info('system', `Manual buy requested: ${symbol} @ $${price}`);
+  (agent as unknown as { handleManualBuy: (s: string, p: number) => Promise<void> })
+    .handleManualBuy(symbol, price)
+    .catch((e: unknown) => logger.error('system', String(e)));
+  res.json({ ok: true, message: `Pipeline triggered for ${symbol}` });
+});
+
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
   logger.info('system', `Dashboard connected: ${socket.id}`);
