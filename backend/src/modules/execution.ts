@@ -201,25 +201,26 @@ export class ExecutionModule {
   }
 
   async getAccountLiquidity(): Promise<number> {
-    // Ensure we have the account number before requesting updates
     await this.ensureAccount();
 
     return new Promise((resolve, reject) => {
-      const handler = (_account: string, key: string, value: string) => {
-        if (key === 'NetLiquidation') {
-          this.ib.off(EventName.updateAccountValue, handler);
-          clearTimeout(timer);
-          const liquidity = parseFloat(value);
-          logger.success('execution', `Net liquidity: $${liquidity.toLocaleString()}`);
-          resolve(liquidity);
-        }
+      const reqId = this.nextOrderIdOffset + 8000;
+      const handler = (rId: number, _account: string, tag: string, value: string) => {
+        if (rId !== reqId || tag !== 'NetLiquidation') return;
+        this.ib.off(EventName.accountSummary, handler);
+        this.ib.cancelAccountSummary(reqId);
+        clearTimeout(timer);
+        const liquidity = parseFloat(value);
+        logger.success('execution', `Net liquidity: $${liquidity.toLocaleString()}`);
+        resolve(liquidity);
       };
-      this.ib.on(EventName.updateAccountValue, handler);
-      this.ib.reqAccountUpdates(true, this.account);
+      this.ib.on(EventName.accountSummary, handler);
+      this.ib.reqAccountSummary(reqId, 'All', 'NetLiquidation');
 
       const timer = setTimeout(() => {
-        this.ib.off(EventName.updateAccountValue, handler);
-        reject(new Error(`IBKR account update timed out for account ${this.account}`));
+        this.ib.off(EventName.accountSummary, handler);
+        this.ib.cancelAccountSummary(reqId);
+        reject(new Error(`Account summary timed out — check TWS API permissions`));
       }, 15_000);
     });
   }
