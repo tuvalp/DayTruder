@@ -59,7 +59,7 @@ export class AlphaAgent extends EventEmitter {
       // 2104/2106/2158/2119 = market data farm connection notices
       // 162 = scanner/historical pacing (harmless)
       // 365 = scanner subscription requires paid add-on (not used anymore)
-      if ([162, 365, 2104, 2106, 2158, 2119].includes(code)) return;
+      if ([162, 365, 10089, 2104, 2106, 2158, 2119].includes(code)) return;
       logger.error('system', `IBKR error code ${code} (reqId ${reqId})`);
     });
   }

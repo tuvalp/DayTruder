@@ -43,8 +43,10 @@ export class MarketScanner extends EventEmitter {
   start() {
     if (this.running) return;
     this.running = true;
+    // 4 = real-time if subscribed, delayed otherwise — suppresses error 10089
+    this.ib.reqMarketDataType(4);
     this.attachTickHandlers();
-    logger.info('scanner', 'Scanner ready — waiting for first Polygon screener batch…');
+    logger.info('scanner', 'Scanner ready — waiting for first screener batch…');
   }
 
   stop() {
