@@ -20,6 +20,7 @@ export interface AppSettings {
   minRelativeVolume: number;
   maxFloatM: number;
   minPriceSurgePct: number;
+  minCatalystScore: number;
 }
 
 export interface CatalystScore {

@@ -7,6 +7,7 @@ import { RiskEngine } from './risk';
 import { ExecutionModule } from './execution';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import { settingsStore } from './settings';
 import type { ScannerAlert, AgentState, PortfolioSnapshot, PerformanceDataPoint } from '../types';
 
 /**
@@ -147,8 +148,9 @@ export class AlphaAgent extends EventEmitter {
       this.setState('scanning'); return;
     }
 
-    if (catalyst.score < 50) {
-      logger.warn('system', `${alert.symbol} skipped — catalyst score ${catalyst.score}/100.`);
+    const { minCatalystScore } = settingsStore.get();
+    if (catalyst.score < minCatalystScore) {
+      logger.warn('system', `${alert.symbol} skipped — catalyst score ${catalyst.score}/100 below threshold (${minCatalystScore}).`);
       this.scanner.setStrategy(alert.symbol, 'rejected');
       this.setState('scanning');
       return;

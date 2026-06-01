@@ -12,6 +12,8 @@ export interface AppSettings {
   minRelativeVolume: number;
   maxFloatM: number;
   minPriceSurgePct: number;
+  // Research
+  minCatalystScore: number;   // 0 = trade everything, 50 = default, 100 = never trade
 }
 
 const DEFAULTS: AppSettings = {
@@ -24,6 +26,7 @@ const DEFAULTS: AppSettings = {
   minRelativeVolume: 3,
   maxFloatM: 20,
   minPriceSurgePct: 5,
+  minCatalystScore: 50,
 };
 
 /** In-memory settings store. Emits 'change' when updated. */

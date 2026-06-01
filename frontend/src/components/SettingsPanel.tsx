@@ -25,6 +25,8 @@ const FIELDS: FieldDef[] = [
   { key: 'stopLossPct',         label: 'Stop-Loss',             min: 1,    max: 15,   step: 0.5, unit: '%',  section: 'risk',    description: 'Hard stop-loss below entry price' },
   { key: 'maxOpenPositions',    label: 'Max Open Positions',    min: 1,    max: 20,   step: 1,   unit: '',   section: 'risk',    description: 'Maximum simultaneous open positions' },
   { key: 'maxDailyLossPct',     label: 'Daily Loss Limit',      min: 1,    max: 20,   step: 0.5, unit: '%',  section: 'risk',    description: 'Circuit-breaker trips when daily loss hits this' },
+  // Research
+  { key: 'minCatalystScore', label: 'Min Catalyst Score', min: 0, max: 100, step: 1, unit: '', section: 'risk', description: 'Claude AI score threshold — set to 0 to bypass AI gating (testing only)' },
   // Scanner
   { key: 'minPrice',            label: 'Min Price',             min: 0.1,  max: 50,   step: 0.1, unit: '$',  section: 'scanner', description: 'Ignore tickers below this price' },
   { key: 'maxPrice',            label: 'Max Price',             min: 1,    max: 100,  step: 1,   unit: '$',  section: 'scanner', description: 'Ignore tickers above this price' },
