@@ -3,6 +3,16 @@ export type OrderType = 'market' | 'limit' | 'stop' | 'stop_limit';
 export type OrderStatus = 'pending' | 'filled' | 'partially_filled' | 'cancelled' | 'rejected';
 export type PositionStatus = 'open' | 'closed';
 export type AgentState = 'idle' | 'scanning' | 'researching' | 'executing' | 'monitoring' | 'paused';
+export type SymbolStrategy = 'watching' | 'alert' | 'researching' | 'sizing' | 'positioned' | 'rejected';
+
+export interface WatchlistEntry {
+  symbol: string;
+  price: number;
+  changePercent: number;
+  relVol: number;
+  strategy: SymbolStrategy;
+  updatedAt: number;
+}
 
 export interface MarketTick {
   symbol: string;

@@ -124,27 +124,38 @@ export class AlphaAgent extends EventEmitter {
     if (this.state === 'paused') return;
     if (this.risk.isCircuitBreakerActive) return;
 
+    this.scanner.setStrategy(alert.symbol, 'alert');
     this.setState('researching');
+    this.scanner.setStrategy(alert.symbol, 'researching');
 
     const catalyst = await this.research.analyze(alert).catch((err) => {
       logger.error('research', `Analysis failed for ${alert.symbol}: ${err}`);
       return null;
     });
-    if (!catalyst) { this.setState('scanning'); return; }
+    if (!catalyst) {
+      this.scanner.setStrategy(alert.symbol, 'watching');
+      this.setState('scanning'); return;
+    }
 
     if (catalyst.score < 50) {
       logger.warn('system', `${alert.symbol} skipped — catalyst score ${catalyst.score}/100.`);
+      this.scanner.setStrategy(alert.symbol, 'rejected');
       this.setState('scanning');
       return;
     }
 
     this.setState('executing');
+    this.scanner.setStrategy(alert.symbol, 'sizing');
     const openCount = this.execution.getOpenPositions().length;
     const sizing = this.risk.size(alert.symbol, alert.price, catalyst, openCount);
-    if (!sizing) { this.setState('monitoring'); return; }
+    if (!sizing) {
+      this.scanner.setStrategy(alert.symbol, 'rejected');
+      this.setState('monitoring'); return;
+    }
 
     const position = await this.execution.submitBracketOrder(sizing, catalyst);
     if (position) {
+      this.scanner.setStrategy(alert.symbol, 'positioned');
       logger.trade(
         'system',
         `✅ TRADE OPENED: ${alert.symbol} | ${sizing.shares} sh | SL $${sizing.stopLoss.toFixed(2)} | TP1 $${sizing.takeProfits[0].toFixed(2)}`,

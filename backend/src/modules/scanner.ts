@@ -7,7 +7,7 @@ import {
 } from '@stoqey/ib';
 import { logger } from '../utils/logger';
 import { settingsStore } from './settings';
-import type { ScannerAlert } from '../types';
+import type { ScannerAlert, WatchlistEntry, SymbolStrategy } from '../types';
 
 interface TickState {
   prices: { price: number; ts: number }[];
@@ -15,6 +15,8 @@ interface TickState {
   avgVolume: number;
   float: number;
   lastPrice: number;
+  openPrice: number;   // first tick of the session — used for % change
+  strategy: SymbolStrategy;
 }
 
 /**
@@ -92,8 +94,40 @@ export class MarketScanner extends EventEmitter {
       'scanner',
       `Watchlist: ${this.symbolToReqId.size} active symbols | +${symbols.length} from screener`
     );
+    this.emitWatchlist();
+  }
 
-    this.emit('watchlist', Array.from(this.symbolToReqId.keys()));
+  /** Called by the agent to update the pipeline stage for a symbol. */
+  setStrategy(symbol: string, strategy: SymbolStrategy) {
+    const state = this.tickState.get(symbol);
+    if (state) { state.strategy = strategy; this.emitWatchlist(); }
+  }
+
+  private emitWatchlist() {
+    const entries: WatchlistEntry[] = [];
+    for (const [symbol, state] of this.tickState.entries()) {
+      if (state.lastPrice === 0) continue;
+      const changePct = state.openPrice > 0
+        ? ((state.lastPrice - state.openPrice) / state.openPrice) * 100
+        : 0;
+      const currentVol = state.volumes[state.volumes.length - 1] ?? 0;
+      const relVol = state.avgVolume > 0 ? currentVol / state.avgVolume : 0;
+      entries.push({
+        symbol,
+        price: state.lastPrice,
+        changePercent: changePct,
+        relVol,
+        strategy: state.strategy,
+        updatedAt: Date.now(),
+      });
+    }
+    // Sort: positioned first, then by % change descending
+    entries.sort((a, b) => {
+      if (a.strategy === 'positioned' && b.strategy !== 'positioned') return -1;
+      if (b.strategy === 'positioned' && a.strategy !== 'positioned') return 1;
+      return b.changePercent - a.changePercent;
+    });
+    this.emit('watchlist', entries);
   }
 
   // ── Internal ──────────────────────────────────────────────────────────────
@@ -108,6 +142,8 @@ export class MarketScanner extends EventEmitter {
       avgVolume: 0,
       float: float ?? 15,
       lastPrice: 0,
+      openPrice: 0,
+      strategy: 'watching',
     });
 
     const contract: Contract = {
@@ -147,11 +183,13 @@ export class MarketScanner extends EventEmitter {
   private onLastPrice(symbol: string, price: number) {
     const state = this.tickState.get(symbol);
     if (!state) return;
+    if (state.openPrice === 0) state.openPrice = price;
     state.lastPrice = price;
     const ts = Date.now();
     state.prices.push({ price, ts });
     if (state.prices.length > 120) state.prices.shift();
     this.evaluate(symbol, price, ts);
+    this.emitWatchlist();
   }
 
   private onVolume(symbol: string, volume: number) {

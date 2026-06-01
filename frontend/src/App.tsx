@@ -79,7 +79,7 @@ export default function App() {
               />
             </div>
             <div className="shrink-0">
-              <WatchlistCard symbols={watchlist} />
+              <WatchlistCard entries={watchlist} />
             </div>
             <div className="shrink-0">
               <PerformanceChart data={performance} />

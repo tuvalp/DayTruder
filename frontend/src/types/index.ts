@@ -1,4 +1,14 @@
 export type AgentState = 'idle' | 'scanning' | 'researching' | 'executing' | 'monitoring' | 'paused';
+export type SymbolStrategy = 'watching' | 'alert' | 'researching' | 'sizing' | 'positioned' | 'rejected';
+
+export interface WatchlistEntry {
+  symbol: string;
+  price: number;
+  changePercent: number;
+  relVol: number;
+  strategy: SymbolStrategy;
+  updatedAt: number;
+}
 
 export interface AppSettings {
   maxRiskPerTradePct: number;
