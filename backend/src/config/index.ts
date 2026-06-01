@@ -15,8 +15,8 @@ const ConfigSchema = z.object({
   IBKR_ACCOUNT: z.string().optional(),
 
   // ── Market Data ───────────────────────────────────────────────────────────
-  // Free key at https://polygon.io — no credit card required
-  POLYGON_API_KEY: z.string().min(1),
+  // Free key at https://finnhub.io — 60 calls/min, no credit card required
+  FINNHUB_API_KEY: z.string().min(1),
 
   // ── AI ────────────────────────────────────────────────────────────────────
   ANTHROPIC_API_KEY: z.string().min(1),
