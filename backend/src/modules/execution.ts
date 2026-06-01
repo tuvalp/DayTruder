@@ -35,14 +35,6 @@ export class ExecutionModule {
 
   constructor(ib: IBApi) {
     this.ib = ib;
-    // Auto-detect account number from TWS on connect
-    this.ib.on(EventName.managedAccounts, (accountsList: string) => {
-      if (!this.account) {
-        this.account = accountsList.split(',')[0].trim();
-        logger.success('execution', `Auto-detected IBKR account: ${this.account}`);
-      }
-    });
-
     this.ib.on(EventName.nextValidId, (orderId: number) => {
       this.orderIdBase = orderId;
       logger.info('execution', `IBKR next valid order ID: ${orderId}`);
@@ -209,6 +201,9 @@ export class ExecutionModule {
   }
 
   async getAccountLiquidity(): Promise<number> {
+    // Ensure we have the account number before requesting updates
+    await this.ensureAccount();
+
     return new Promise((resolve, reject) => {
       const handler = (_account: string, key: string, value: string) => {
         if (key === 'NetLiquidation') {
@@ -224,8 +219,27 @@ export class ExecutionModule {
 
       const timer = setTimeout(() => {
         this.ib.off(EventName.updateAccountValue, handler);
-        reject(new Error('IBKR account update timed out — ensure TWS is running and API is enabled'));
+        reject(new Error(`IBKR account update timed out for account ${this.account}`));
       }, 15_000);
+    });
+  }
+
+  private ensureAccount(): Promise<void> {
+    if (this.account) return Promise.resolve();
+    return new Promise((resolve) => {
+      const handler = (accountsList: string) => {
+        this.account = accountsList.split(',')[0].trim();
+        logger.success('execution', `Auto-detected IBKR account: ${this.account}`);
+        resolve();
+      };
+      // May have already fired — request it explicitly
+      this.ib.once(EventName.managedAccounts, handler);
+      this.ib.reqManagedAccts();
+      // If still not received in 5 s, proceed with empty string (TWS will respond with all accounts)
+      setTimeout(() => {
+        this.ib.off(EventName.managedAccounts, handler);
+        resolve();
+      }, 5_000);
     });
   }
 
