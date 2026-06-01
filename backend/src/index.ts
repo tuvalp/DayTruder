@@ -5,6 +5,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import { config } from './config';
 import { logger } from './utils/logger';
 import { AlphaAgent } from './modules/agent';
+import { settingsStore } from './modules/settings';
 import type { AgentLogEntry, PortfolioSnapshot, PerformanceDataPoint } from './types';
 
 const app = express();
@@ -16,62 +17,58 @@ const io = new SocketIOServer(httpServer, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
 });
 
-// ── Agent ────────────────────────────────────────────────────────────────────
 const agent = new AlphaAgent();
 
-// Pipe agent log events through to connected clients
 logger.setEmitter((entry: AgentLogEntry) => io.emit('log', entry));
+agent.on('portfolio', (s: PortfolioSnapshot) => io.emit('portfolio', s));
+agent.on('performance', (h: PerformanceDataPoint[]) => io.emit('performance', h));
+agent.on('state', (s: string) => io.emit('agentState', s));
+agent.on('trade', (p: unknown) => io.emit('trade', p));
 
-agent.on('portfolio', (snapshot: PortfolioSnapshot) => io.emit('portfolio', snapshot));
-agent.on('performance', (history: PerformanceDataPoint[]) => io.emit('performance', history));
-agent.on('state', (state: string) => io.emit('agentState', state));
-agent.on('trade', (position: unknown) => io.emit('trade', position));
+// Broadcast settings changes to all connected dashboards
+settingsStore.on('change', (s) => io.emit('settings', s));
 
-// ── REST API ─────────────────────────────────────────────────────────────────
+// ── REST ──────────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ ok: true, state: agent.getState() }));
 
 app.post('/agent/start', (_req, res) => {
-  agent.start().catch((err) => logger.error('system', String(err)));
+  agent.start().catch((e) => logger.error('system', String(e)));
   res.json({ ok: true });
 });
+app.post('/agent/pause', (_req, res) => { agent.pause(); res.json({ ok: true }); });
+app.get('/agent/performance', (_req, res) => res.json(agent.getPerformanceHistory()));
 
-app.post('/agent/pause', (_req, res) => {
-  agent.pause();
-  res.json({ ok: true });
+app.get('/settings', (_req, res) => res.json(settingsStore.get()));
+app.patch('/settings', (req, res) => {
+  const updated = settingsStore.update(req.body);
+  logger.info('system', 'Settings updated via UI', updated as unknown as Record<string, unknown>);
+  res.json(updated);
 });
-
-app.get('/agent/performance', (_req, res) => {
-  res.json(agent.getPerformanceHistory());
-});
+app.post('/settings/reset', (_req, res) => res.json(settingsStore.reset()));
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
   logger.info('system', `Dashboard connected: ${socket.id}`);
-
-  // Send current state on connect
   socket.emit('agentState', agent.getState());
+  socket.emit('settings', settingsStore.get());
   socket.emit('performance', agent.getPerformanceHistory());
 
   socket.on('startAgent', () => agent.start().catch((e) => logger.error('system', String(e))));
   socket.on('pauseAgent', () => agent.pause());
+  socket.on('updateSettings', (patch: Record<string, number>) => {
+    const updated = settingsStore.update(patch);
+    io.emit('settings', updated);
+  });
 
-  socket.on('disconnect', () =>
-    logger.info('system', `Dashboard disconnected: ${socket.id}`)
-  );
+  socket.on('disconnect', () => logger.info('system', `Dashboard disconnected: ${socket.id}`));
 });
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 httpServer.listen(config.PORT, () => {
   logger.info('system', `AlphaAgent backend listening on port ${config.PORT}`);
   if (config.NODE_ENV === 'production') {
-    agent.start().catch((err) => {
-      logger.error('system', `Failed to auto-start agent: ${err}`);
-    });
+    agent.start().catch((e) => logger.error('system', `Auto-start failed: ${e}`));
   }
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  agent.pause();
-  httpServer.close(() => process.exit(0));
-});
+process.on('SIGTERM', () => { agent.pause(); httpServer.close(() => process.exit(0)); });

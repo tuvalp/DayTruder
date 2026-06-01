@@ -1,5 +1,17 @@
 export type AgentState = 'idle' | 'scanning' | 'researching' | 'executing' | 'monitoring' | 'paused';
 
+export interface AppSettings {
+  maxRiskPerTradePct: number;
+  stopLossPct: number;
+  maxOpenPositions: number;
+  maxDailyLossPct: number;
+  minPrice: number;
+  maxPrice: number;
+  minRelativeVolume: number;
+  maxFloatM: number;
+  minPriceSurgePct: number;
+}
+
 export interface CatalystScore {
   symbol: string;
   score: number;

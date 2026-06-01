@@ -3,12 +3,25 @@ import { io, Socket } from 'socket.io-client';
 import type {
   AgentLogEntry,
   AgentState,
+  AppSettings,
   PortfolioSnapshot,
   PerformanceDataPoint,
 } from '../types';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:4000';
 const MAX_LOGS = 500;
+
+const DEFAULT_SETTINGS: AppSettings = {
+  maxRiskPerTradePct: 1.5,
+  stopLossPct: 4,
+  maxOpenPositions: 5,
+  maxDailyLossPct: 6,
+  minPrice: 1,
+  maxPrice: 10,
+  minRelativeVolume: 3,
+  maxFloatM: 20,
+  minPriceSurgePct: 5,
+};
 
 export function useSocket() {
   const socketRef = useRef<Socket | null>(null);
@@ -17,6 +30,7 @@ export function useSocket() {
   const [portfolio, setPortfolio] = useState<PortfolioSnapshot | null>(null);
   const [performance, setPerformance] = useState<PerformanceDataPoint[]>([]);
   const [logs, setLogs] = useState<AgentLogEntry[]>([]);
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
   useEffect(() => {
     const socket = io(BACKEND_URL, { transports: ['websocket'] });
@@ -27,6 +41,7 @@ export function useSocket() {
     socket.on('agentState', (s: AgentState) => setAgentState(s));
     socket.on('portfolio', (p: PortfolioSnapshot) => setPortfolio(p));
     socket.on('performance', (h: PerformanceDataPoint[]) => setPerformance(h));
+    socket.on('settings', (s: AppSettings) => setSettings(s));
     socket.on('log', (entry: AgentLogEntry) =>
       setLogs((prev) => {
         const next = [...prev, entry];
@@ -39,6 +54,9 @@ export function useSocket() {
 
   const startAgent = useCallback(() => socketRef.current?.emit('startAgent'), []);
   const pauseAgent = useCallback(() => socketRef.current?.emit('pauseAgent'), []);
+  const updateSettings = useCallback((patch: Partial<AppSettings>) => {
+    socketRef.current?.emit('updateSettings', patch);
+  }, []);
 
-  return { connected, agentState, portfolio, performance, logs, startAgent, pauseAgent };
+  return { connected, agentState, portfolio, performance, logs, settings, startAgent, pauseAgent, updateSettings };
 }
