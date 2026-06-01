@@ -1,6 +1,6 @@
 import EventEmitter from 'events';
 import { IBApi, EventName } from '@stoqey/ib';
-import { MarketScanner, DEFAULT_WATCHLIST } from './scanner';
+import { MarketScanner } from './scanner';
 import { PolygonScreener } from './screener';
 import { ResearchAgent } from './research';
 import { RiskEngine } from './risk';
@@ -78,13 +78,12 @@ export class AlphaAgent extends EventEmitter {
     this.risk = new RiskEngine(liquidity);
     logger.success('system', `Account net liquidity: $${liquidity.toLocaleString()}`);
 
-    this.scanner.setWatchlist(DEFAULT_WATCHLIST);
     this.scanner.on('alert', (alert: ScannerAlert) => this.handleAlert(alert));
     this.scanner.start();
 
-    // Polygon screener discovers movers every 60 s and feeds them into IBKR subscriptions
+    // Polygon screener drives the entire watchlist — polls every 30 s for today's movers
     this.screener.start((results) => {
-      this.scanner.ingestScreenerResults(results.map((r) => r.symbol));
+      this.scanner.ingestSymbols(results.map((r) => ({ symbol: r.symbol, float: r.float })));
     });
 
     this.syncInterval = setInterval(() => this.syncAndEmit(), 5000);
