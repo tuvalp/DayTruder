@@ -72,7 +72,7 @@ export class AlphaAgent extends EventEmitter {
     const liquidity = await this.execution.getAccountLiquidity();
     this.startingLiquidity = liquidity;
     this.risk = new RiskEngine(liquidity);
-    logger.info('system', `Account net liquidity: $${liquidity.toLocaleString()}`);
+    logger.success('system', `Account net liquidity: $${liquidity.toLocaleString()}`);
 
     this.scanner.on('alert', (alert: ScannerAlert) => this.handleAlert(alert));
     this.scanner.start();

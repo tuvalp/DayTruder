@@ -201,17 +201,22 @@ export class ExecutionModule {
   }
 
   async getAccountLiquidity(): Promise<number> {
-    return new Promise((resolve) => {
-      const handler = (_account: string, key: string, value: string) => {
-        if (key === 'NetLiquidation') {
+    return new Promise((resolve, reject) => {
+      const handler = (account: string, key: string, value: string) => {
+        // IBKR sends NetLiquidation for the total and NetLiquidation-S for securities segment
+        if (key === 'NetLiquidation' && account === config.IBKR_ACCOUNT) {
           this.ib.off(EventName.updateAccountValue, handler);
+          clearTimeout(timer);
           resolve(parseFloat(value));
         }
       };
       this.ib.on(EventName.updateAccountValue, handler);
       this.ib.reqAccountUpdates(true, config.IBKR_ACCOUNT);
-      // Fallback in case event never fires
-      setTimeout(() => resolve(25_000), 5000);
+
+      const timer = setTimeout(() => {
+        this.ib.off(EventName.updateAccountValue, handler);
+        reject(new Error('IBKR account update timed out after 15 s — check IBKR_ACCOUNT in .env'));
+      }, 15_000);
     });
   }
 
