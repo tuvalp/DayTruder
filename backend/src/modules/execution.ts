@@ -1,45 +1,45 @@
-import axios, { AxiosInstance } from 'axios';
+import {
+  IBApi,
+  EventName,
+  Contract,
+  Order as IBOrder,
+  OrderAction,
+  OrderType as IBOrderType,
+  SecType,
+  Currency,
+  TimeInForce,
+} from '@stoqey/ib';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import type { Order, Position, PositionSizing, CatalystScore, OrderStatus } from '../types';
 
-interface AlpacaOrderResponse {
-  id: string;
-  status: string;
-  filled_qty: string;
-  filled_avg_price: string | null;
-  filled_at: string | null;
-}
-
 /**
- * Order Execution Module
+ * Order Execution Module — IBKR
  *
- * Submits bracket orders (entry + stop-loss + take-profit) to Alpaca.
- * Tracks open positions and polls for fill status.
+ * Connects to TWS / IB Gateway via the shared IBApi instance.
+ * Submits bracket orders:
+ *   - Parent: Limit BUY
+ *   - Child 1: Stop SELL (hard stop-loss)
+ *   - Child 2: Limit SELL (first take-profit)
  *
- * Bracket order structure (Alpaca OCA group):
- *  - Entry: Market or Limit buy
- *  - Leg 1 (stop-loss): Stop order
- *  - Leg 2 (first TP): Limit sell of full position
- *
- * For multi-tier TPs we submit individual limit sells after the bracket fills.
+ * IBKR bracket orders use transmit=false on the parent and first child,
+ * transmit=true on the last child to send all three atomically.
  */
 export class ExecutionModule {
-  private http: AxiosInstance;
+  private ib: IBApi;
   private positions = new Map<string, Position>();
-  private fillPoller: NodeJS.Timeout | null = null;
+  private orderIdBase: number | null = null;
+  private nextOrderIdOffset = 0;
 
-  constructor() {
-    this.http = axios.create({
-      baseURL: config.ALPACA_BASE_URL + '/v2',
-      headers: {
-        'APCA-API-KEY-ID': config.ALPACA_API_KEY,
-        'APCA-API-SECRET-KEY': config.ALPACA_SECRET_KEY,
-        'Content-Type': 'application/json',
-      },
-      timeout: 5000,
+  constructor(ib: IBApi) {
+    this.ib = ib;
+    // TWS sends the next valid order ID on connect
+    this.ib.on(EventName.nextValidId, (orderId: number) => {
+      this.orderIdBase = orderId;
+      logger.info('execution', `IBKR next valid order ID: ${orderId}`);
     });
+    this.ib.on(EventName.orderStatus, this.onOrderStatus.bind(this));
   }
 
   async submitBracketOrder(
@@ -48,40 +48,85 @@ export class ExecutionModule {
   ): Promise<Position | null> {
     const { symbol, shares, entryPrice, stopLoss, takeProfits } = sizing;
 
-    logger.trade('execution', `Submitting bracket order: BUY ${shares} ${symbol} @ ~$${entryPrice.toFixed(2)}`);
+    if (this.orderIdBase === null) {
+      logger.error('execution', 'No valid order ID from TWS yet — cannot submit order.');
+      return null;
+    }
 
-    const orderPayload = {
+    const parentId = this.orderIdBase + this.nextOrderIdOffset++;
+    const slId     = this.orderIdBase + this.nextOrderIdOffset++;
+    const tpId     = this.orderIdBase + this.nextOrderIdOffset++;
+
+    const contract: Contract = {
       symbol,
-      qty: shares.toString(),
-      side: 'buy',
-      type: 'limit',
-      time_in_force: 'day',
-      limit_price: (entryPrice * 1.005).toFixed(2),  // 0.5% slippage buffer
-      order_class: 'bracket',
-      stop_loss: { stop_price: stopLoss.toFixed(2) },
-      take_profit: { limit_price: takeProfits[0].toFixed(2) },  // first TP
+      secType: SecType.STK,
+      currency: Currency.USD,
+      exchange: 'SMART',
     };
 
-    let brokerResp: AlpacaOrderResponse;
+    const limitPrice = parseFloat((entryPrice * 1.005).toFixed(2));  // 0.5% slippage buffer
+
+    // ── Parent: Limit BUY ────────────────────────────────────────────────────
+    const parentOrder: IBOrder = {
+      orderId: parentId,
+      action: OrderAction.BUY,
+      orderType: IBOrderType.LMT,
+      totalQuantity: shares,
+      lmtPrice: limitPrice,
+      tif: TimeInForce.DAY,
+      transmit: false,          // hold — send atomically with children
+      account: config.IBKR_ACCOUNT,
+    };
+
+    // ── Child 1: Stop SELL (stop-loss) ───────────────────────────────────────
+    const slOrder: IBOrder = {
+      orderId: slId,
+      action: OrderAction.SELL,
+      orderType: IBOrderType.STP,
+      totalQuantity: shares,
+      auxPrice: parseFloat(stopLoss.toFixed(2)),
+      tif: TimeInForce.GTC,
+      parentId,
+      transmit: false,
+      account: config.IBKR_ACCOUNT,
+    };
+
+    // ── Child 2: Limit SELL (first take-profit) ──────────────────────────────
+    const tpOrder: IBOrder = {
+      orderId: tpId,
+      action: OrderAction.SELL,
+      orderType: IBOrderType.LMT,
+      totalQuantity: shares,
+      lmtPrice: parseFloat(takeProfits[0].toFixed(2)),
+      tif: TimeInForce.GTC,
+      parentId,
+      transmit: true,           // transmit=true sends the whole bracket
+      account: config.IBKR_ACCOUNT,
+    };
+
+    logger.trade(
+      'execution',
+      `Submitting IBKR bracket: BUY ${shares} ${symbol} @ $${limitPrice} | SL $${stopLoss.toFixed(2)} | TP $${takeProfits[0].toFixed(2)}`
+    );
+
     try {
-      const { data } = await this.http.post<AlpacaOrderResponse>('/orders', orderPayload);
-      brokerResp = data;
+      this.ib.placeOrder(parentId, contract, parentOrder);
+      this.ib.placeOrder(slId,     contract, slOrder);
+      this.ib.placeOrder(tpId,     contract, tpOrder);
     } catch (err) {
-      const msg = axios.isAxiosError(err) ? JSON.stringify(err.response?.data) : String(err);
-      logger.error('execution', `Order rejected by broker: ${msg}`);
+      logger.error('execution', `placeOrder error: ${String(err)}`);
       return null;
     }
 
     const entryOrder: Order = {
       id: uuidv4(),
-      brokerOrderId: brokerResp.id,
+      brokerOrderId: String(parentId),
       symbol,
       side: 'buy',
       type: 'limit',
       quantity: shares,
-      limitPrice: entryPrice * 1.005,
-      stopPrice: undefined,
-      status: this.mapStatus(brokerResp.status),
+      limitPrice,
+      status: 'pending',
       submittedAt: Date.now(),
     };
 
@@ -102,7 +147,7 @@ export class ExecutionModule {
     };
 
     this.positions.set(symbol, position);
-    logger.success('execution', `Position opened: ${symbol} — bracket order ID ${brokerResp.id}`);
+    logger.success('execution', `Position registered: ${symbol} — IBKR order IDs ${parentId}/${slId}/${tpId}`);
     return position;
   }
 
@@ -113,63 +158,98 @@ export class ExecutionModule {
       return false;
     }
 
+    if (this.orderIdBase === null) return false;
+    const mktOrderId = this.orderIdBase + this.nextOrderIdOffset++;
+
+    const contract: Contract = {
+      symbol,
+      secType: SecType.STK,
+      currency: Currency.USD,
+      exchange: 'SMART',
+    };
+
+    const mktSell: IBOrder = {
+      orderId: mktOrderId,
+      action: OrderAction.SELL,
+      orderType: IBOrderType.MKT,
+      totalQuantity: position.shares,
+      tif: TimeInForce.DAY,
+      transmit: true,
+      account: config.IBKR_ACCOUNT,
+    };
+
     try {
-      await this.http.delete(`/positions/${symbol}`);
+      this.ib.placeOrder(mktOrderId, contract, mktSell);
       position.status = 'closed';
       position.closedAt = Date.now();
       this.positions.delete(symbol);
-      logger.trade('execution', `Position closed (market): ${symbol}`);
+      logger.trade('execution', `Market close submitted for ${symbol} (orderId ${mktOrderId})`);
       return true;
     } catch (err) {
-      const msg = axios.isAxiosError(err) ? JSON.stringify(err.response?.data) : String(err);
-      logger.error('execution', `Failed to close ${symbol}: ${msg}`);
+      logger.error('execution', `Failed to close ${symbol}: ${String(err)}`);
       return false;
     }
   }
 
-  /** Fetch live position data from broker and sync local state. */
-  async syncPositions(): Promise<void> {
-    try {
-      const { data } = await this.http.get<AlpacaPositionResponse[]>('/positions');
-      for (const pos of data) {
-        const local = this.positions.get(pos.symbol);
-        if (local) {
-          local.currentPrice = parseFloat(pos.current_price);
-          local.unrealizedPnl = parseFloat(pos.unrealized_pl);
-          local.unrealizedPnlPct = parseFloat(pos.unrealized_plpc) * 100;
-        }
-      }
-    } catch (err) {
-      logger.warn('execution', 'Failed to sync positions from broker.');
-    }
+  /** Sync open position prices from IBKR portfolio events. */
+  syncPositionPrice(symbol: string, currentPrice: number) {
+    const pos = this.positions.get(symbol);
+    if (!pos) return;
+    pos.currentPrice = currentPrice;
+    pos.unrealizedPnl = (currentPrice - pos.avgPrice) * pos.shares;
+    pos.unrealizedPnlPct = ((currentPrice - pos.avgPrice) / pos.avgPrice) * 100;
   }
 
-  /** Fetch account equity from Alpaca. */
   async getAccountLiquidity(): Promise<number> {
-    const { data } = await this.http.get<{ portfolio_value: string }>('/account');
-    return parseFloat(data.portfolio_value);
+    return new Promise((resolve) => {
+      const handler = (_account: string, key: string, value: string) => {
+        if (key === 'NetLiquidation') {
+          this.ib.off(EventName.updateAccountValue, handler);
+          resolve(parseFloat(value));
+        }
+      };
+      this.ib.on(EventName.updateAccountValue, handler);
+      this.ib.reqAccountUpdates(true, config.IBKR_ACCOUNT);
+      // Fallback in case event never fires
+      setTimeout(() => resolve(25_000), 5000);
+    });
   }
 
   getOpenPositions(): Position[] {
     return Array.from(this.positions.values()).filter((p) => p.status === 'open');
   }
 
-  private mapStatus(alpacaStatus: string): OrderStatus {
-    const map: Record<string, OrderStatus> = {
-      new: 'pending',
-      partially_filled: 'partially_filled',
-      filled: 'filled',
-      canceled: 'cancelled',
-      rejected: 'rejected',
-      expired: 'cancelled',
-    };
-    return map[alpacaStatus] ?? 'pending';
+  private onOrderStatus(
+    orderId: number,
+    status: string,
+    filled: number,
+    _remaining: number,
+    avgFillPrice: number
+  ) {
+    // Find the position that owns this order and update fill data
+    for (const pos of this.positions.values()) {
+      const order = pos.orders.find((o) => o.brokerOrderId === String(orderId));
+      if (!order) continue;
+      order.status = this.mapStatus(status);
+      order.filledQty = filled;
+      order.avgFillPrice = avgFillPrice;
+      if (status === 'Filled') {
+        order.filledAt = Date.now();
+        pos.avgPrice = avgFillPrice || pos.avgPrice;
+        logger.success('execution', `Order ${orderId} FILLED: ${filled} @ $${avgFillPrice}`);
+      }
+    }
   }
-}
 
-interface AlpacaPositionResponse {
-  symbol: string;
-  current_price: string;
-  unrealized_pl: string;
-  unrealized_plpc: string;
+  private mapStatus(ibStatus: string): OrderStatus {
+    const map: Record<string, OrderStatus> = {
+      PreSubmitted: 'pending',
+      Submitted:    'pending',
+      Filled:       'filled',
+      PartiallyFilled: 'partially_filled',
+      Cancelled:    'cancelled',
+      Inactive:     'cancelled',
+    };
+    return map[ibStatus] ?? 'pending';
+  }
 }
