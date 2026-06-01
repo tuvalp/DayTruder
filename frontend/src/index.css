@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { @apply bg-surface text-white; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { @apply bg-surface-1; }
+  ::-webkit-scrollbar-thumb { @apply bg-surface-3 rounded-full; }
+}
+
+@layer utilities {
+  .glow-green { box-shadow: 0 0 12px rgba(63, 185, 80, 0.4); }
+  .glow-red   { box-shadow: 0 0 12px rgba(248, 81, 73, 0.4); }
+  .glow-blue  { box-shadow: 0 0 12px rgba(88, 166, 255, 0.3); }
+}
