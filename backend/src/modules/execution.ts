@@ -31,10 +31,18 @@ export class ExecutionModule {
   private positions = new Map<string, Position>();
   private orderIdBase: number | null = null;
   private nextOrderIdOffset = 0;
+  private account: string = config.IBKR_ACCOUNT ?? '';
 
   constructor(ib: IBApi) {
     this.ib = ib;
-    // TWS sends the next valid order ID on connect
+    // Auto-detect account number from TWS on connect
+    this.ib.on(EventName.managedAccounts, (accountsList: string) => {
+      if (!this.account) {
+        this.account = accountsList.split(',')[0].trim();
+        logger.success('execution', `Auto-detected IBKR account: ${this.account}`);
+      }
+    });
+
     this.ib.on(EventName.nextValidId, (orderId: number) => {
       this.orderIdBase = orderId;
       logger.info('execution', `IBKR next valid order ID: ${orderId}`);
@@ -75,7 +83,7 @@ export class ExecutionModule {
       lmtPrice: limitPrice,
       tif: TimeInForce.DAY,
       transmit: false,          // hold — send atomically with children
-      account: config.IBKR_ACCOUNT,
+      account: this.account,
     };
 
     // ── Child 1: Stop SELL (stop-loss) ───────────────────────────────────────
@@ -88,7 +96,7 @@ export class ExecutionModule {
       tif: TimeInForce.GTC,
       parentId,
       transmit: false,
-      account: config.IBKR_ACCOUNT,
+      account: this.account,
     };
 
     // ── Child 2: Limit SELL (first take-profit) ──────────────────────────────
@@ -101,7 +109,7 @@ export class ExecutionModule {
       tif: TimeInForce.GTC,
       parentId,
       transmit: true,           // transmit=true sends the whole bracket
-      account: config.IBKR_ACCOUNT,
+      account: this.account,
     };
 
     logger.trade(
@@ -175,7 +183,7 @@ export class ExecutionModule {
       totalQuantity: position.shares,
       tif: TimeInForce.DAY,
       transmit: true,
-      account: config.IBKR_ACCOUNT,
+      account: this.account,
     };
 
     try {
@@ -202,20 +210,21 @@ export class ExecutionModule {
 
   async getAccountLiquidity(): Promise<number> {
     return new Promise((resolve, reject) => {
-      const handler = (account: string, key: string, value: string) => {
-        // IBKR sends NetLiquidation for the total and NetLiquidation-S for securities segment
-        if (key === 'NetLiquidation' && account === config.IBKR_ACCOUNT) {
+      const handler = (_account: string, key: string, value: string) => {
+        if (key === 'NetLiquidation') {
           this.ib.off(EventName.updateAccountValue, handler);
           clearTimeout(timer);
-          resolve(parseFloat(value));
+          const liquidity = parseFloat(value);
+          logger.success('execution', `Net liquidity: $${liquidity.toLocaleString()}`);
+          resolve(liquidity);
         }
       };
       this.ib.on(EventName.updateAccountValue, handler);
-      this.ib.reqAccountUpdates(true, config.IBKR_ACCOUNT);
+      this.ib.reqAccountUpdates(true, this.account);
 
       const timer = setTimeout(() => {
         this.ib.off(EventName.updateAccountValue, handler);
-        reject(new Error('IBKR account update timed out after 15 s — check IBKR_ACCOUNT in .env'));
+        reject(new Error('IBKR account update timed out — ensure TWS is running and API is enabled'));
       }, 15_000);
     });
   }

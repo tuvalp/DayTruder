@@ -11,7 +11,8 @@ const ConfigSchema = z.object({
   IBKR_HOST: z.string().default('127.0.0.1'),
   IBKR_PORT: z.coerce.number().default(7496),
   IBKR_CLIENT_ID: z.coerce.number().default(1),
-  IBKR_ACCOUNT: z.string().min(1),
+  // Account is auto-detected from TWS on connect — only set this to force a specific account
+  IBKR_ACCOUNT: z.string().optional(),
 
   // ── Market Data ───────────────────────────────────────────────────────────
   // Free key at https://polygon.io — no credit card required
