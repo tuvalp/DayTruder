@@ -1,6 +1,6 @@
 import EventEmitter from 'events';
 import { IBApi, EventName } from '@stoqey/ib';
-import { MarketScanner } from './scanner';
+import { MarketScanner, DEFAULT_WATCHLIST } from './scanner';
 import { ResearchAgent } from './research';
 import { RiskEngine } from './risk';
 import { ExecutionModule } from './execution';
@@ -54,8 +54,9 @@ export class AlphaAgent extends EventEmitter {
     this.ib.on(EventName.error, (_err, code, reqId) => {
       // Informational / transient codes — suppress
       // 2104/2106/2158/2119 = market data farm connection notices
-      // 162 = scanner/historical pacing — harmless when filterOptions is empty
-      if ([162, 2104, 2106, 2158, 2119].includes(code)) return;
+      // 162 = scanner/historical pacing (harmless)
+      // 365 = scanner subscription requires paid add-on (not used anymore)
+      if ([162, 365, 2104, 2106, 2158, 2119].includes(code)) return;
       logger.error('system', `IBKR error code ${code} (reqId ${reqId})`);
     });
   }
@@ -74,6 +75,7 @@ export class AlphaAgent extends EventEmitter {
     this.risk = new RiskEngine(liquidity);
     logger.success('system', `Account net liquidity: $${liquidity.toLocaleString()}`);
 
+    this.scanner.setWatchlist(DEFAULT_WATCHLIST);
     this.scanner.on('alert', (alert: ScannerAlert) => this.handleAlert(alert));
     this.scanner.start();
 
