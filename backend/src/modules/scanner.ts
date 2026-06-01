@@ -54,10 +54,22 @@ export class MarketScanner extends EventEmitter {
   start() {
     if (this.running) return;
     this.running = true;
-    logger.info('scanner', `Subscribing to ${this.watchlist.length} symbols via reqMktData…`);
+    logger.info('scanner', `Subscribing to ${this.watchlist.length} seed symbols via reqMktData…`);
     this.attachTickHandlers();
     for (const symbol of this.watchlist) this.subscribe(symbol);
-    logger.success('scanner', 'Market data subscriptions active.');
+    logger.success('scanner', 'Market data subscriptions active — awaiting Polygon screener updates.');
+  }
+
+  /** Called by the Polygon screener to add newly discovered movers. */
+  ingestScreenerResults(symbols: string[]) {
+    let added = 0;
+    for (const symbol of symbols) {
+      if (!this.symbolToReqId.has(symbol)) {
+        this.subscribe(symbol);
+        added++;
+      }
+    }
+    if (added > 0) logger.info('scanner', `Polygon screener added ${added} new symbols to IBKR feed`);
   }
 
   stop() {

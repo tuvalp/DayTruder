@@ -1,6 +1,7 @@
 import EventEmitter from 'events';
 import { IBApi, EventName } from '@stoqey/ib';
 import { MarketScanner, DEFAULT_WATCHLIST } from './scanner';
+import { PolygonScreener } from './screener';
 import { ResearchAgent } from './research';
 import { RiskEngine } from './risk';
 import { ExecutionModule } from './execution';
@@ -17,6 +18,7 @@ import type { ScannerAlert, AgentState, PortfolioSnapshot, PerformanceDataPoint 
 export class AlphaAgent extends EventEmitter {
   private ib: IBApi;
   private scanner: MarketScanner;
+  private screener: PolygonScreener;
   private research: ResearchAgent;
   private risk: RiskEngine;
   private execution: ExecutionModule;
@@ -36,6 +38,7 @@ export class AlphaAgent extends EventEmitter {
     });
 
     this.scanner  = new MarketScanner(this.ib);
+    this.screener = new PolygonScreener();
     this.research = new ResearchAgent();
     this.execution = new ExecutionModule(this.ib);
     this.risk = new RiskEngine(0);
@@ -79,6 +82,11 @@ export class AlphaAgent extends EventEmitter {
     this.scanner.on('alert', (alert: ScannerAlert) => this.handleAlert(alert));
     this.scanner.start();
 
+    // Polygon screener discovers movers every 60 s and feeds them into IBKR subscriptions
+    this.screener.start((results) => {
+      this.scanner.ingestScreenerResults(results.map((r) => r.symbol));
+    });
+
     this.syncInterval = setInterval(() => this.syncAndEmit(), 5000);
     logger.success('system', '✅ AlphaAgent is LIVE and scanning the market.');
   }
@@ -86,6 +94,7 @@ export class AlphaAgent extends EventEmitter {
   pause() {
     this.setState('paused');
     this.scanner.stop();
+    this.screener.stop();
     if (this.syncInterval) clearInterval(this.syncInterval);
     logger.warn('system', '⏸  AlphaAgent paused — no new entries.');
   }

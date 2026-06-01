@@ -13,6 +13,10 @@ const ConfigSchema = z.object({
   IBKR_CLIENT_ID: z.coerce.number().default(1),
   IBKR_ACCOUNT: z.string().min(1),
 
+  // ── Market Data ───────────────────────────────────────────────────────────
+  // Free key at https://polygon.io — no credit card required
+  POLYGON_API_KEY: z.string().min(1),
+
   // ── AI ────────────────────────────────────────────────────────────────────
   ANTHROPIC_API_KEY: z.string().min(1),
   CLAUDE_MODEL: z.string().default('claude-sonnet-4-6'),
