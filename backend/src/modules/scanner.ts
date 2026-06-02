@@ -172,7 +172,7 @@ export class MarketScanner extends EventEmitter {
       exchange: 'SMART',
     };
 
-    this.ib.reqMktData(reqId, contract, '236', false, false, []);
+    (this.ib as unknown as { reqMktData: (...a: unknown[]) => void }).reqMktData(reqId, contract, '236', false, false, []);
   }
 
   private unsubscribe(symbol: string) {
@@ -192,11 +192,12 @@ export class MarketScanner extends EventEmitter {
       if (tickType === 4) this.onLastPrice(symbol, price);
     });
 
-    this.ib.on(EventName.tickSize, (reqId: number, tickType: number, size: number) => {
-      const symbol = this.reqIdToSymbol.get(reqId);
-      if (!symbol) return;
-      if (tickType === 8) this.onVolume(symbol, Number(size));
-    });
+    (this.ib as unknown as { on: (e: string, h: (...a: unknown[]) => void) => void })
+      .on('tickSize', (reqId: unknown, tickType: unknown, size: unknown) => {
+        const symbol = this.reqIdToSymbol.get(reqId as number);
+        if (!symbol) return;
+        if (tickType === 8) this.onVolume(symbol, Number(size));
+      });
   }
 
   private onLastPrice(symbol: string, price: number) {

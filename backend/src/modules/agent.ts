@@ -82,6 +82,10 @@ export class AlphaAgent extends EventEmitter {
     this.risk = new RiskEngine(liquidity);
     logger.success('system', `Account net liquidity: $${liquidity.toLocaleString()}`);
 
+    // Sync open positions and orders from IBKR (handles restarts gracefully)
+    await this.execution.syncPositionsFromIBKR();
+    await this.execution.syncOpenOrdersFromIBKR();
+
     this.scanner.on('alert', (alert: ScannerAlert) => this.handleAlert(alert));
     this.scanner.on('watchlist', (entries) => this.emit('watchlist', entries));
     this.scanner.start();

@@ -41,6 +41,162 @@ export class ExecutionModule {
     this.ib.on(EventName.orderStatus, this.onOrderStatus.bind(this));
   }
 
+  /**
+   * Pull all open positions from IBKR TWS and merge them into the local map.
+   * Existing positions submitted this session keep their stop/TP data.
+   * Positions found in IBKR but not in local map are imported (e.g. after restart).
+   */
+  syncPositionsFromIBKR(): Promise<void> {
+    return new Promise((resolve) => {
+      const seen = new Set<string>();
+
+      const posHandler = (
+        _account: string,
+        _contract: Contract,
+        pos: number,
+        avgCost: number
+      ) => {
+        const symbol: string = (_contract as unknown as { symbol: string }).symbol;
+        if (!symbol || pos === 0) return;
+        seen.add(symbol);
+
+        const existing = this.positions.get(symbol);
+        if (existing) {
+          // Update shares / avg cost in case they changed (partial fills, averaging)
+          existing.shares   = Math.abs(pos);
+          existing.avgPrice = avgCost;
+        } else {
+          // Import position that existed before this session started
+          const ibPos: Position = {
+            id: uuidv4(),
+            symbol,
+            shares: Math.abs(pos),
+            avgPrice: avgCost,
+            currentPrice: avgCost,
+            unrealizedPnl: 0,
+            unrealizedPnlPct: 0,
+            stopLoss: avgCost * 0.96,      // default 4% SL until agent can set a real one
+            takeProfits: [avgCost * 1.06, avgCost * 1.12, avgCost * 1.20],
+            status: 'open',
+            openedAt: Date.now(),
+            catalystScore: {
+              symbol,
+              score: 0,
+              sentiment: 'neutral',
+              catalystType: 'Imported from IBKR',
+              headline: 'Position existed before agent session',
+              reasoning: 'Imported from TWS on agent startup',
+              confidence: 0,
+              analyzedAt: Date.now(),
+            },
+            orders: [],
+          };
+          this.positions.set(symbol, ibPos);
+          logger.info('execution', `Imported IBKR position: ${symbol} × ${ibPos.shares} @ $${avgCost.toFixed(2)}`);
+        }
+      };
+
+      const endHandler = () => {
+        this.ib.off(EventName.position, posHandler);
+        this.ib.off(EventName.positionEnd, endHandler);
+
+        // Mark any local positions no longer in IBKR as closed
+        for (const [sym, p] of this.positions.entries()) {
+          if (p.status === 'open' && !seen.has(sym)) {
+            p.status = 'closed';
+            logger.info('execution', `Position ${sym} no longer held in IBKR — marked closed`);
+          }
+        }
+
+        const open = this.getOpenPositions();
+        logger.success('execution', `IBKR position sync complete — ${open.length} open position(s): ${open.map((p) => `${p.symbol} ×${p.shares}`).join(', ') || 'none'}`);
+        resolve();
+      };
+
+      const ib = this.ib as unknown as { on: (e: string, h: unknown) => void; off: (e: string, h: unknown) => void; reqPositions: () => void };
+      ib.on('position', posHandler);
+      ib.on('positionEnd', endHandler);
+      this.ib.reqPositions();
+
+      // Safety timeout — resolve even if positionEnd never fires
+      setTimeout(() => {
+        ib.off('position', posHandler);
+        ib.off('positionEnd', endHandler);
+        resolve();
+      }, 10_000);
+    });
+  }
+
+  /**
+   * Pull all open/pending orders from TWS and attach them to matching positions.
+   * Uses reqOpenOrders() which returns only orders placed by this client ID.
+   * Also captures stop-loss and take-profit prices so the dashboard can show them.
+   */
+  syncOpenOrdersFromIBKR(): Promise<void> {
+    return new Promise((resolve) => {
+      const orderHandler = (
+        orderId: number,
+        contract: Contract,
+        order: IBOrder,
+      ) => {
+        const symbol: string = (contract as unknown as { symbol: string }).symbol;
+        if (!symbol) return;
+
+        const pos = this.positions.get(symbol);
+        if (!pos) return;
+
+        // Avoid duplicates
+        if (pos.orders.some((o) => o.brokerOrderId === String(orderId))) return;
+
+        const ibOrderType = order.orderType as string;
+        const side = (order.action as string) === 'SELL' ? 'sell' : 'buy';
+
+        const appOrder: Order = {
+          id: uuidv4(),
+          brokerOrderId: String(orderId),
+          symbol,
+          side,
+          type: ibOrderType === 'STP' ? 'stop' : ibOrderType === 'LMT' ? 'limit' : 'market',
+          quantity: Number(order.totalQuantity ?? 0),
+          limitPrice: order.lmtPrice ?? undefined,
+          stopPrice: order.auxPrice ?? undefined,
+          status: 'pending',
+          submittedAt: Date.now(),
+        };
+        pos.orders.push(appOrder);
+
+        // Update SL/TP on the position object from real order data
+        if (ibOrderType === 'STP' && order.auxPrice) {
+          pos.stopLoss = order.auxPrice;
+        }
+        if (ibOrderType === 'LMT' && side === 'sell' && order.lmtPrice) {
+          if (!pos.takeProfits.includes(order.lmtPrice)) {
+            pos.takeProfits = [order.lmtPrice, ...pos.takeProfits.slice(1)];
+          }
+        }
+      };
+
+      const endHandler = () => {
+        this.ib.off(EventName.openOrder, orderHandler);
+        this.ib.off(EventName.openOrderEnd, endHandler);
+        const total = Array.from(this.positions.values()).reduce((n, p) => n + p.orders.length, 0);
+        logger.success('execution', `IBKR order sync complete — ${total} active order(s) attached`);
+        resolve();
+      };
+
+      const ib2 = this.ib as unknown as { on: (e: string, h: unknown) => void; off: (e: string, h: unknown) => void; reqOpenOrders: () => void };
+      ib2.on('openOrder', orderHandler);
+      ib2.on('openOrderEnd', endHandler);
+      this.ib.reqOpenOrders();
+
+      setTimeout(() => {
+        ib2.off('openOrder', orderHandler);
+        ib2.off('openOrderEnd', endHandler);
+        resolve();
+      }, 10_000);
+    });
+  }
+
   async submitBracketOrder(
     sizing: PositionSizing,
     catalyst: CatalystScore
