@@ -59,10 +59,14 @@ export class AlphaAgent extends EventEmitter {
 
     this.ib.on(EventName.error, (_err, code, reqId) => {
       // Informational / transient codes — suppress
-      // 2104/2106/2158/2119 = market data farm connection notices
-      // 162 = scanner/historical pacing (harmless)
-      // 365 = scanner subscription requires paid add-on (not used anymore)
       if ([162, 300, 365, 2104, 2106, 2158, 2119, 10089, 10167, 10168].includes(code)) return;
+      // 200 = no security definition — symbol is unresolvable (warrant, OTC, etc.)
+      // Drop it from the scanner so it doesn't stay on the watchlist
+      if ((code as unknown as number) === 200) {
+        const sym = this.scanner.dropByReqId(reqId);
+        if (sym) logger.warn('scanner', `${sym} removed — IBKR cannot resolve contract (error 200)`);
+        return;
+      }
       logger.error('system', `IBKR error code ${code} (reqId ${reqId})`);
     });
   }

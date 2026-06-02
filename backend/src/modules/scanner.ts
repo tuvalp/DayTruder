@@ -105,6 +105,14 @@ export class MarketScanner extends EventEmitter {
     this.emitWatchlist();
   }
 
+  /** Called by the agent when IBKR returns error 200 for a reqId — drop that symbol. */
+  dropByReqId(reqId: number): string | null {
+    const symbol = this.reqIdToSymbol.get(reqId);
+    if (!symbol) return null;
+    this.unsubscribe(symbol);
+    return symbol;
+  }
+
   /** Called by the agent to update the pipeline stage for a symbol. */
   setStrategy(symbol: string, strategy: SymbolStrategy) {
     const state = this.tickState.get(symbol);
