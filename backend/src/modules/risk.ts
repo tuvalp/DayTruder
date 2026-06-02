@@ -51,12 +51,14 @@ export class RiskEngine {
       logger.warn('risk', `${symbol} rejected — max open positions (${s.maxOpenPositions}) reached.`);
       return null;
     }
-    if (catalyst.score < 50) {
-      logger.warn('risk', `${symbol} rejected — catalyst score ${catalyst.score}/100 below threshold.`);
+    // Use live settings threshold — not a hardcoded value
+    if (catalyst.score < s.minCatalystScore) {
+      logger.warn('risk', `${symbol} rejected — catalyst score ${catalyst.score}/100 below threshold (${s.minCatalystScore}).`);
       return null;
     }
 
-    const activeRiskMultiplier = Math.min(catalyst.confidence, 1.0);
+    // Scale risk by confidence — but floor at 50% so a 0.5-confidence play still gets half position
+    const activeRiskMultiplier = Math.max(0.5, Math.min(catalyst.confidence, 1.0));
     const effectiveRiskPct = s.maxRiskPerTradePct * activeRiskMultiplier;
     const dollarRisk = this.accountLiquidity * (effectiveRiskPct / 100);
     const stopLossPrice = entryPrice * (1 - s.stopLossPct / 100);
@@ -76,7 +78,9 @@ export class RiskEngine {
 
     logger.info('risk', `${symbol} approved: ${shares} sh @ $${entryPrice.toFixed(2)} | Risk $${dollarRisk.toFixed(0)} | SL $${stopLossPrice.toFixed(2)}`);
 
-    const takeProfits = [0.05, 0.10, 0.20].map((t) => entryPrice * (1 + t));
+    // R:R-based TPs: 1.5R, 3R, 5R — proportional to the actual stop distance
+    const riskPerShare = entryPrice - stopLossPrice;
+    const takeProfits = [1.5, 3, 5].map((r) => parseFloat((entryPrice + r * riskPerShare).toFixed(2)));
     return { symbol, shares, entryPrice, stopLoss: stopLossPrice, takeProfits, dollarRisk, positionValue: shares * entryPrice };
   }
 

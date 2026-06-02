@@ -26,7 +26,7 @@ const DEFAULTS: AppSettings = {
   minRelativeVolume: 3,
   maxFloatM: 20,
   minPriceSurgePct: 5,
-  minCatalystScore: 50,
+  minCatalystScore: 30,
 };
 
 /** In-memory settings store. Emits 'change' when updated. */
