@@ -5,6 +5,7 @@ import { Header } from './components/Header';
 import { MetricCard } from './components/MetricCard';
 import { PerformanceChart } from './components/PerformanceChart';
 import { PositionsTable } from './components/PositionsTable';
+import { OrdersTable } from './components/OrdersTable';
 import { AgentTerminal } from './components/AgentTerminal';
 import { SettingsPanel } from './components/SettingsPanel';
 import { WatchlistCard } from './components/WatchlistCard';
@@ -14,7 +15,7 @@ import { fmt } from './utils/format';
 type Tab = 'dashboard' | 'settings';
 
 export default function App() {
-  const { connected, agentState, portfolio, performance, logs, settings, watchlist, startAgent, pauseAgent, updateSettings } =
+  const { connected, agentState, portfolio, performance, logs, settings, watchlist, positions, orders, startAgent, pauseAgent, updateSettings } =
     useSocket();
 
   const [tab, setTab] = useState<Tab>('dashboard');
@@ -88,8 +89,11 @@ export default function App() {
             <div className="shrink-0">
               <ManualBuy />
             </div>
-            <div className="flex-1 overflow-auto min-h-0">
-              <PositionsTable positions={portfolio?.openPositions ?? []} />
+            <div className="shrink-0">
+              <PositionsTable positions={positions} />
+            </div>
+            <div className="shrink-0">
+              <OrdersTable orders={orders} />
             </div>
           </div>
           <div className="w-[420px] shrink-0 flex flex-col min-h-0">

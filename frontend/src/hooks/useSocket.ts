@@ -7,6 +7,8 @@ import type {
   PortfolioSnapshot,
   PerformanceDataPoint,
   WatchlistEntry,
+  Position,
+  Order,
 } from '../types';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:4000';
@@ -37,6 +39,8 @@ export function useSocket() {
   const [logs, setLogs] = useState<AgentLogEntry[]>([]);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [orders,    setOrders]    = useState<Order[]>([]);
 
   useEffect(() => {
     const socket = io(BACKEND_URL, { transports: ['websocket'] });
@@ -47,8 +51,10 @@ export function useSocket() {
     socket.on('agentState', (s: AgentState) => setAgentState(s));
     socket.on('portfolio', (p: PortfolioSnapshot) => setPortfolio(p));
     socket.on('performance', (h: PerformanceDataPoint[]) => setPerformance(h));
-    socket.on('settings', (s: AppSettings) => setSettings(s));
-    socket.on('watchlist', (s: WatchlistEntry[]) => setWatchlist(s));
+    socket.on('settings',  (s: AppSettings)      => setSettings(s));
+    socket.on('watchlist', (s: WatchlistEntry[])  => setWatchlist(s));
+    socket.on('positions', (s: Position[])        => setPositions(s));
+    socket.on('orders',    (s: Order[])           => setOrders(s));
     socket.on('log', (entry: AgentLogEntry) =>
       setLogs((prev) => {
         const next = [...prev, entry];
@@ -65,5 +71,5 @@ export function useSocket() {
     socketRef.current?.emit('updateSettings', patch);
   }, []);
 
-  return { connected, agentState, portfolio, performance, logs, settings, watchlist, startAgent, pauseAgent, updateSettings };
+  return { connected, agentState, portfolio, performance, logs, settings, watchlist, positions, orders, startAgent, pauseAgent, updateSettings };
 }

@@ -25,7 +25,11 @@ agent.on('performance', (h: PerformanceDataPoint[]) => io.emit('performance', h)
 agent.on('state', (s: string) => io.emit('agentState', s));
 agent.on('trade', (p: unknown) => io.emit('trade', p));
 let lastWatchlist: unknown[] = [];
-agent.on('watchlist', (entries: unknown[]) => { lastWatchlist = entries; io.emit('watchlist', entries); });
+let lastPositions: unknown[] = [];
+let lastOrders: unknown[] = [];
+agent.on('watchlist',  (entries: unknown[]) => { lastWatchlist  = entries; io.emit('watchlist',  entries); });
+agent.on('positions',  (entries: unknown[]) => { lastPositions  = entries; io.emit('positions',  entries); });
+agent.on('orders',     (entries: unknown[]) => { lastOrders     = entries; io.emit('orders',     entries); });
 
 // Broadcast settings changes to all connected dashboards
 settingsStore.on('change', (s) => io.emit('settings', s));
@@ -65,7 +69,9 @@ io.on('connection', (socket) => {
   socket.emit('agentState', agent.getState());
   socket.emit('settings', settingsStore.get());
   socket.emit('performance', agent.getPerformanceHistory());
-  if (lastWatchlist.length > 0) socket.emit('watchlist', lastWatchlist);
+  if (lastWatchlist.length  > 0) socket.emit('watchlist',  lastWatchlist);
+  if (lastPositions.length  > 0) socket.emit('positions',  lastPositions);
+  if (lastOrders.length     > 0) socket.emit('orders',     lastOrders);
 
   socket.on('startAgent', () => agent.start().catch((e) => logger.error('system', String(e))));
   socket.on('pauseAgent', () => agent.pause());

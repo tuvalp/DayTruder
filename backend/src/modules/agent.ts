@@ -90,6 +90,9 @@ export class AlphaAgent extends EventEmitter {
     await this.execution.syncPositionsFromIBKR();
     await this.execution.syncOpenOrdersFromIBKR();
 
+    // Subscribe live price ticks for every open position; re-emit on each update
+    this.execution.startLiveTracking(() => this.emitPositions());
+
     this.scanner.on('alert', (alert: ScannerAlert) => this.handleAlert(alert));
     this.scanner.on('watchlist', (entries) => this.emit('watchlist', entries));
     this.scanner.start();
@@ -228,6 +231,12 @@ export class AlphaAgent extends EventEmitter {
 
     this.emit('portfolio', snapshot);
     this.emit('performance', this.performanceHistory);
+    this.emitPositions();
+  }
+
+  emitPositions() {
+    this.emit('positions', this.execution.getOpenPositions());
+    this.emit('orders', this.execution.getOpenOrders());
   }
 
   private setState(state: AgentState) {

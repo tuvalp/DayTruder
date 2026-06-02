@@ -31,6 +31,10 @@ export class ExecutionModule {
   private orderIdBase: number | null = null;
   private nextOrderIdOffset = 0;
   private account: string = config.IBKR_ACCOUNT ?? '';
+  // reqId range 5000–5999 reserved for position live-price subscriptions
+  private posReqIdCounter = 5000;
+  private posReqIdToSymbol = new Map<number, string>();
+  private onPositionsChange?: () => void;
 
   constructor(ib: IBApi) {
     this.ib = ib;
@@ -39,6 +43,93 @@ export class ExecutionModule {
       logger.info('execution', `IBKR next valid order ID: ${orderId}`);
     });
     this.ib.on(EventName.orderStatus, this.onOrderStatus.bind(this));
+  }
+
+  /**
+   * Subscribe live reqMktData + ongoing reqPositions for all open positions.
+   * Calls onPositionsChange whenever a price or P&L value updates so the
+   * caller (agent) can re-emit the portfolio snapshot immediately.
+   */
+  startLiveTracking(onPositionsChange: () => void) {
+    this.onPositionsChange = onPositionsChange;
+
+    // ── Live price ticks for position symbols ─────────────────────────────────
+    const ib = this.ib as unknown as {
+      on: (e: string, h: (...a: unknown[]) => void) => void;
+      reqMktData: (...a: unknown[]) => void;
+      cancelMktData: (id: number) => void;
+      reqPositions: () => void;
+      cancelPositions: () => void;
+    };
+
+    ib.on('tickPrice', (reqId: unknown, tickType: unknown, price: unknown) => {
+      const symbol = this.posReqIdToSymbol.get(reqId as number);
+      if (!symbol || (tickType as number) !== 4 || (price as number) <= 0) return;
+      this.syncPositionPrice(symbol, price as number);
+      this.onPositionsChange?.();
+    });
+
+    // ── Ongoing position updates from TWS (fires when shares/cost changes) ────
+    ib.on('position', (_account: unknown, contract: unknown, pos: unknown, avgCost: unknown) => {
+      const symbol = (contract as { symbol: string }).symbol;
+      if (!symbol) return;
+      const shares = Math.abs(pos as number);
+      const existing = this.positions.get(symbol);
+      if (existing && existing.status === 'open') {
+        existing.shares   = shares;
+        existing.avgPrice = avgCost as number;
+        if (shares === 0) { existing.status = 'closed'; this.cancelPositionMktData(symbol); }
+      } else if (shares > 0 && !existing) {
+        // Position opened outside agent (manual TWS trade)
+        this.positions.set(symbol, {
+          id: uuidv4(), symbol, shares,
+          avgPrice: avgCost as number, currentPrice: avgCost as number,
+          unrealizedPnl: 0, unrealizedPnlPct: 0,
+          stopLoss: (avgCost as number) * 0.93,
+          takeProfits: [(avgCost as number) * 1.25, (avgCost as number) * 1.37, (avgCost as number) * 1.50],
+          status: 'open', openedAt: Date.now(),
+          catalystScore: { symbol, score: 0, sentiment: 'neutral', catalystType: 'Manual TWS', headline: 'Opened outside agent', reasoning: '', confidence: 0, analyzedAt: Date.now() },
+          orders: [],
+        });
+        this.subscribePositionMktData(symbol);
+      }
+      this.onPositionsChange?.();
+    });
+
+    // Subscribe market data for any already-known positions (from sync)
+    for (const pos of this.getOpenPositions()) {
+      this.subscribePositionMktData(pos.symbol);
+    }
+
+    // Start streaming position updates from TWS
+    ib.reqPositions();
+    logger.info('execution', 'Live position tracking started (price ticks + position stream)');
+  }
+
+  private subscribePositionMktData(symbol: string) {
+    if ([...this.posReqIdToSymbol.values()].includes(symbol)) return;
+    const reqId = this.posReqIdCounter++;
+    this.posReqIdToSymbol.set(reqId, symbol);
+    const contract: Contract = { symbol, secType: SecType.STK, currency: 'USD', exchange: 'SMART' };
+    (this.ib as unknown as { reqMktData: (...a: unknown[]) => void })
+      .reqMktData(reqId, contract, '', false, false, []);
+  }
+
+  private cancelPositionMktData(symbol: string) {
+    for (const [reqId, sym] of this.posReqIdToSymbol.entries()) {
+      if (sym !== symbol) continue;
+      try { this.ib.cancelMktData(reqId); } catch { /* ignore */ }
+      this.posReqIdToSymbol.delete(reqId);
+      break;
+    }
+  }
+
+  getOpenOrders(): Order[] {
+    const orders: Order[] = [];
+    for (const pos of this.positions.values()) {
+      orders.push(...pos.orders);
+    }
+    return orders;
   }
 
   /**
@@ -302,6 +393,7 @@ export class ExecutionModule {
     };
 
     this.positions.set(symbol, position);
+    this.subscribePositionMktData(symbol);
     logger.success('execution', `Position registered: ${symbol} — IBKR order IDs ${parentId}/${slId}/${tpId}`);
     return position;
   }
