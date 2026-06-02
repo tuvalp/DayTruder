@@ -83,7 +83,7 @@ export class AlphaAgent extends EventEmitter {
     logger.success('system', `Account net liquidity: $${liquidity.toLocaleString()}`);
 
     this.scanner.on('alert', (alert: ScannerAlert) => this.handleAlert(alert));
-    this.scanner.on('watchlist', (symbols: string[]) => this.emit('watchlist', symbols));
+    this.scanner.on('watchlist', (entries) => this.emit('watchlist', entries));
     this.scanner.start();
 
     // Polygon screener drives the entire watchlist — polls every 30 s for today's movers

@@ -57,7 +57,7 @@ export default function App() {
       {/* Dashboard tab */}
       {tab === 'dashboard' && (
         <div className="flex flex-1 gap-3 p-3 overflow-hidden min-h-0">
-          <div className="flex flex-col gap-3 flex-1 min-w-0 overflow-hidden">
+          <div className="flex flex-col gap-3 flex-1 min-w-0 overflow-y-auto pb-3">
             <div className="grid grid-cols-3 gap-3 shrink-0">
               <MetricCard
                 label="Net Liquidity"

@@ -24,7 +24,8 @@ agent.on('portfolio', (s: PortfolioSnapshot) => io.emit('portfolio', s));
 agent.on('performance', (h: PerformanceDataPoint[]) => io.emit('performance', h));
 agent.on('state', (s: string) => io.emit('agentState', s));
 agent.on('trade', (p: unknown) => io.emit('trade', p));
-agent.on('watchlist', (symbols: string[]) => io.emit('watchlist', symbols));
+let lastWatchlist: unknown[] = [];
+agent.on('watchlist', (entries: unknown[]) => { lastWatchlist = entries; io.emit('watchlist', entries); });
 
 // Broadcast settings changes to all connected dashboards
 settingsStore.on('change', (s) => io.emit('settings', s));
@@ -64,6 +65,7 @@ io.on('connection', (socket) => {
   socket.emit('agentState', agent.getState());
   socket.emit('settings', settingsStore.get());
   socket.emit('performance', agent.getPerformanceHistory());
+  if (lastWatchlist.length > 0) socket.emit('watchlist', lastWatchlist);
 
   socket.on('startAgent', () => agent.start().catch((e) => logger.error('system', String(e))));
   socket.on('pauseAgent', () => agent.pause());
