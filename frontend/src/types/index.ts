@@ -13,6 +13,9 @@ export interface WatchlistEntry {
 export interface AppSettings {
   maxRiskPerTradePct: number;
   stopLossPct: number;
+  minTakeProfitPct: number;
+  commissionPerSide: number;
+  minNetProfitDollar: number;
   maxOpenPositions: number;
   maxDailyLossPct: number;
   minPrice: number;

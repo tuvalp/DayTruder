@@ -15,13 +15,15 @@ interface TickState {
   avgVolume: number;
   float: number;
   lastPrice: number;
-  openPrice: number;   // first tick of the session — used for % change
+  openPrice: number;
   strategy: SymbolStrategy;
   // Breakout tracking
-  recentHigh: number;       // highest price in the last 5 min
+  recentHigh: number;
   recentHighTs: number;
-  consolidationStart: number | null;  // ts when tight range began
-  consolidationBase: number;          // price floor of the consolidation
+  consolidationStart: number | null;
+  consolidationBase: number;
+  // Throttle evaluate() to every 5 s
+  lastEvaluateTs: number;
 }
 
 /**
@@ -163,6 +165,7 @@ export class MarketScanner extends EventEmitter {
       recentHighTs: Date.now(),
       consolidationStart: null,
       consolidationBase: seedPrice ?? 0,
+      lastEvaluateTs: 0,
     });
 
     const contract: Contract = {
@@ -224,71 +227,71 @@ export class MarketScanner extends EventEmitter {
   }
 
   private evaluate(symbol: string, price: number, ts: number) {
-    const s = settingsStore.get();
     const state = this.tickState.get(symbol);
     if (!state || state.prices.length < 2) return;
+
+    // ── 5-second evaluation gate ──────────────────────────────────────────────
+    if (ts - state.lastEvaluateTs < 5_000) return;
+    state.lastEvaluateTs = ts;
+
+    const s = settingsStore.get();
     if (price < s.minPrice || price > s.maxPrice) return;
+    if (state.float >= s.maxFloatM) return;
 
     const currentVol = state.volumes[state.volumes.length - 1] ?? 0;
     const relVol = state.avgVolume > 0 ? currentVol / state.avgVolume : 0;
+    const rvolOk = state.volumes.length < 10 ? true : relVol >= s.minRelativeVolume;
 
-    // ── Update 5-min rolling high ─────────────────────────────────────────────
-    const fiveMinAgo = ts - 5 * 60_000;
+    // ── Support / resistance from recent price history ────────────────────────
+    const fiveMinAgo  = ts - 5 * 60_000;
+    const twoMinAgo   = ts - 2 * 60_000;
+    const recentPrices = state.prices.filter((p) => p.ts >= fiveMinAgo);
+    const recentWindow = state.prices.filter((p) => p.ts >= twoMinAgo);
+
+    const resistance = recentPrices.length > 0
+      ? Math.max(...recentPrices.map((p) => p.price))
+      : price;
+
+    const support = recentPrices.length > 0
+      ? Math.min(...recentPrices.map((p) => p.price))
+      : price;
+
+    // ── Update rolling high ───────────────────────────────────────────────────
     if (price > state.recentHigh || state.recentHighTs < fiveMinAgo) {
-      // Recalculate high from recent price history
-      const recentPrices = state.prices.filter((p) => p.ts >= fiveMinAgo);
-      state.recentHigh = recentPrices.length > 0
-        ? Math.max(...recentPrices.map((p) => p.price))
-        : price;
+      state.recentHigh  = resistance;
       state.recentHighTs = ts;
     }
 
     // ── Consolidation detection ───────────────────────────────────────────────
-    // A 2-min window where price range is < 1.5% = consolidation / base building
-    const twoMinAgo = ts - 2 * 60_000;
-    const recentWindow = state.prices.filter((p) => p.ts >= twoMinAgo);
     if (recentWindow.length >= 3) {
-      const winHigh = Math.max(...recentWindow.map((p) => p.price));
-      const winLow  = Math.min(...recentWindow.map((p) => p.price));
+      const winHigh  = Math.max(...recentWindow.map((p) => p.price));
+      const winLow   = Math.min(...recentWindow.map((p) => p.price));
       const winRange = (winHigh - winLow) / winLow * 100;
 
       if (winRange < 1.5) {
-        // Price is consolidating — track it
         if (!state.consolidationStart) {
           state.consolidationStart = twoMinAgo;
           state.consolidationBase  = winLow;
         }
-      } else {
-        // Range expanded — reset consolidation if price dropped away
-        if (price < state.consolidationBase * 0.99) {
-          state.consolidationStart = null;
-          state.consolidationBase = price;
-        }
+      } else if (price < state.consolidationBase * 0.99) {
+        state.consolidationStart = null;
+        state.consolidationBase  = price;
       }
     }
 
     // ── Surge calculations ────────────────────────────────────────────────────
     const oneMinAgo = ts - 60_000;
     const pastTick = state.prices.findLast((p) => p.ts <= oneMinAgo);
-    const tickSurgePct = pastTick ? ((price - pastTick.price) / pastTick.price) * 100 : 0;
-
+    const tickSurgePct    = pastTick ? ((price - pastTick.price) / pastTick.price) * 100 : 0;
     const sessionSurgePct = state.openPrice > 0
-      ? ((price - state.openPrice) / state.openPrice) * 100
-      : 0;
-
+      ? ((price - state.openPrice) / state.openPrice) * 100 : 0;
     const surgePct = Math.max(tickSurgePct, sessionSurgePct);
 
-    if (state.float >= s.maxFloatM) return;
-
-    const rvolOk = state.volumes.length < 10 ? true : relVol >= s.minRelativeVolume;
-
-    // ── Breakout detection ────────────────────────────────────────────────────
-    // Trigger if: price breaks above 5-min high by >0.5% with volume, OR normal surge gate passes
-    const prevHigh = state.recentHigh;
-    const isBreakout = prevHigh > 0 && price > prevHigh * 1.005 && rvolOk;
+    // ── Breakout gate ─────────────────────────────────────────────────────────
+    const prevHigh        = state.recentHigh;
+    const isBreakout      = prevHigh > 0 && price > prevHigh * 1.005 && rvolOk;
     const hadConsolidation = state.consolidationStart !== null &&
-      (ts - state.consolidationStart) >= 60_000;  // consolidation lasted ≥ 1 min
-
+      (ts - state.consolidationStart) >= 60_000;
     const surgeOk = surgePct >= s.minPriceSurgePct && rvolOk;
 
     if (!surgeOk && !isBreakout) return;
@@ -296,6 +299,17 @@ export class MarketScanner extends EventEmitter {
     const lastAlert = this.alertCooldown.get(symbol) ?? 0;
     if (ts - lastAlert < 5 * 60_000) return;
     this.alertCooldown.set(symbol, ts);
+
+    // ── Best entry / exit suggestion ──────────────────────────────────────────
+    // Entry: pull back to support or consolidation base (don't chase the spike)
+    // Exit:  previous resistance or +minTakeProfitPct above entry
+    const suggestedEntry = state.consolidationStart
+      ? Math.max(state.consolidationBase, support)
+      : parseFloat((price * 0.99).toFixed(2));  // 1% pullback target if no base
+
+    const suggestedExit = parseFloat(
+      Math.max(resistance * 1.005, price * (1 + s.minTakeProfitPct / 100)).toFixed(2)
+    );
 
     const triggerReasons: string[] = [];
     if (isBreakout && hadConsolidation) {
@@ -310,12 +324,17 @@ export class MarketScanner extends EventEmitter {
     }
     triggerReasons.push(relVol > 0 ? `RVOL ${relVol.toFixed(1)}×` : 'Volume active');
     triggerReasons.push(`Float ${state.float.toFixed(1)}M`);
+    triggerReasons.push(`Entry ~$${suggestedEntry.toFixed(2)} → Exit ~$${suggestedExit.toFixed(2)}`);
 
     const alert: ScannerAlert = {
       symbol, price, priceChangePct: surgePct, volume: currentVol,
       relativeVolume: relVol, float: state.float,
       marketCap: price * state.float * 1_000_000,
       timestamp: ts, triggerReasons,
+      suggestedEntry,
+      suggestedExit,
+      supportLevel:    parseFloat(support.toFixed(2)),
+      resistanceLevel: parseFloat(resistance.toFixed(2)),
     };
 
     logger.success('scanner', `🚨 ALERT: ${symbol} @ $${price.toFixed(2)} — ${triggerReasons.join(' | ')}`, { alert });

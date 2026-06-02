@@ -21,18 +21,20 @@ interface FieldDef {
 
 const FIELDS: FieldDef[] = [
   // Risk
-  { key: 'maxRiskPerTradePct',  label: 'Max Risk / Trade',      min: 0.1,  max: 100,  step: 0.1, unit: '%',  section: 'risk',    description: 'Max % of account risked on a single trade' },
-  { key: 'stopLossPct',         label: 'Stop-Loss',             min: 1,    max: 15,   step: 0.5, unit: '%',  section: 'risk',    description: 'Hard stop-loss below entry price' },
-  { key: 'maxOpenPositions',    label: 'Max Open Positions',    min: 1,    max: 20,   step: 1,   unit: '',   section: 'risk',    description: 'Maximum simultaneous open positions' },
-  { key: 'maxDailyLossPct',     label: 'Daily Loss Limit',      min: 1,    max: 20,   step: 0.5, unit: '%',  section: 'risk',    description: 'Circuit-breaker trips when daily loss hits this' },
-  // Research
-  { key: 'minCatalystScore', label: 'Min Catalyst Score', min: 0, max: 100, step: 1, unit: '', section: 'risk', description: 'Claude AI score threshold — set to 0 to bypass AI gating (testing only)' },
+  { key: 'maxRiskPerTradePct',  label: 'Max Risk / Trade',       min: 0.1, max: 100, step: 0.1, unit: '%', section: 'risk',    description: 'Max % of account risked on a single trade' },
+  { key: 'stopLossPct',         label: 'Stop-Loss',              min: 5,   max: 15,  step: 0.5, unit: '%', section: 'risk',    description: 'Hard stop-loss below entry (penny stocks: 5–10%)' },
+  { key: 'minTakeProfitPct',    label: 'Min Take-Profit',        min: 10,  max: 50,  step: 1,   unit: '%', section: 'risk',    description: 'Minimum profit target — TP1 level (penny stocks: 20–50%)' },
+  { key: 'commissionPerSide',   label: 'Commission / Side',      min: 0,   max: 20,  step: 0.5, unit: '$', section: 'risk',    description: 'Broker fee per order leg ($5 buy + $5 sell = $10 total)' },
+  { key: 'minNetProfitDollar',  label: 'Min Net Profit Target',  min: 5,   max: 200, step: 5,   unit: '$', section: 'risk',    description: 'Reject if max profit after commissions is below this' },
+  { key: 'maxOpenPositions',    label: 'Max Open Positions',     min: 1,   max: 20,  step: 1,   unit: '',  section: 'risk',    description: 'Maximum simultaneous open positions' },
+  { key: 'maxDailyLossPct',     label: 'Daily Loss Limit',       min: 1,   max: 20,  step: 0.5, unit: '%', section: 'risk',    description: 'Circuit-breaker trips when daily loss hits this' },
+  { key: 'minCatalystScore',    label: 'Min Catalyst Score',     min: 0,   max: 100, step: 1,   unit: '',  section: 'risk',    description: 'AI score threshold — 0 = all momentum plays, 30 = default, 70 = news only' },
   // Scanner
-  { key: 'minPrice',            label: 'Min Price',             min: 0.1,  max: 50,   step: 0.1, unit: '$',  section: 'scanner', description: 'Ignore tickers below this price' },
-  { key: 'maxPrice',            label: 'Max Price',             min: 1,    max: 100,  step: 1,   unit: '$',  section: 'scanner', description: 'Ignore tickers above this price' },
-  { key: 'minRelativeVolume',   label: 'Min Relative Volume',   min: 1,    max: 20,   step: 0.5, unit: '×',  section: 'scanner', description: 'Minimum RVOL to qualify for an alert' },
-  { key: 'maxFloatM',           label: 'Max Float',             min: 1,    max: 100,  step: 1,   unit: 'M',  section: 'scanner', description: 'Maximum shares float (millions)' },
-  { key: 'minPriceSurgePct',    label: 'Min 1-min Surge',       min: 1,    max: 30,   step: 0.5, unit: '%',  section: 'scanner', description: 'Minimum 1-minute price surge to trigger alert' },
+  { key: 'minPrice',            label: 'Min Price',              min: 0.1, max: 50,  step: 0.1, unit: '$', section: 'scanner', description: 'Ignore tickers below this price' },
+  { key: 'maxPrice',            label: 'Max Price',              min: 1,   max: 100, step: 1,   unit: '$', section: 'scanner', description: 'Ignore tickers above this price' },
+  { key: 'minRelativeVolume',   label: 'Min Relative Volume',    min: 1,   max: 20,  step: 0.5, unit: '×', section: 'scanner', description: 'Minimum RVOL to qualify for an alert' },
+  { key: 'maxFloatM',           label: 'Max Float',              min: 1,   max: 100, step: 1,   unit: 'M', section: 'scanner', description: 'Maximum shares float (millions)' },
+  { key: 'minPriceSurgePct',    label: 'Min 1-min Surge',        min: 1,   max: 30,  step: 0.5, unit: '%', section: 'scanner', description: 'Minimum price surge % to trigger an alert' },
 ];
 
 export function SettingsPanel({ settings, onSave, onReset }: Props) {

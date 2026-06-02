@@ -140,6 +140,15 @@ export class AlphaAgent extends EventEmitter {
     if (this.risk.isCircuitBreakerActive) return;
 
     this.scanner.setStrategy(alert.symbol, 'alert');
+
+    // ── Profit margin pre-check (no Claude API call wasted) ──────────────────
+    const marginReject = this.risk.checkProfitMargin(alert);
+    if (marginReject) {
+      logger.warn('risk', `${alert.symbol} rejected before research — ${marginReject}`);
+      this.scanner.setStrategy(alert.symbol, 'rejected');
+      return;
+    }
+
     this.setState('researching');
     this.scanner.setStrategy(alert.symbol, 'researching');
 
@@ -163,7 +172,7 @@ export class AlphaAgent extends EventEmitter {
     this.setState('executing');
     this.scanner.setStrategy(alert.symbol, 'sizing');
     const openCount = this.execution.getOpenPositions().length;
-    const sizing = this.risk.size(alert.symbol, alert.price, catalyst, openCount);
+    const sizing = this.risk.size(alert.symbol, alert.price, catalyst, openCount, alert);
     if (!sizing) {
       this.scanner.setStrategy(alert.symbol, 'rejected');
       this.setState('monitoring'); return;

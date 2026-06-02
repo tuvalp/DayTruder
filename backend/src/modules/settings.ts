@@ -3,7 +3,10 @@ import EventEmitter from 'events';
 export interface AppSettings {
   // Risk
   maxRiskPerTradePct: number;
-  stopLossPct: number;
+  stopLossPct: number;         // 5–10% for penny stocks
+  minTakeProfitPct: number;    // 20–50% target profit
+  commissionPerSide: number;   // $ per order leg (buy = 1 side, sell = 1 side)
+  minNetProfitDollar: number;  // reject trade if max profit after commissions < this
   maxOpenPositions: number;
   maxDailyLossPct: number;
   // Scanner
@@ -13,12 +16,15 @@ export interface AppSettings {
   maxFloatM: number;
   minPriceSurgePct: number;
   // Research
-  minCatalystScore: number;   // 0 = trade everything, 50 = default, 100 = never trade
+  minCatalystScore: number;
 }
 
 const DEFAULTS: AppSettings = {
-  maxRiskPerTradePct: 1.5,
-  stopLossPct: 4,
+  maxRiskPerTradePct: 2,
+  stopLossPct: 7,
+  minTakeProfitPct: 25,
+  commissionPerSide: 5,
+  minNetProfitDollar: 20,
   maxOpenPositions: 5,
   maxDailyLossPct: 6,
   minPrice: 1,

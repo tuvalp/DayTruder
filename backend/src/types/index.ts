@@ -34,6 +34,10 @@ export interface ScannerAlert {
   marketCap: number;
   timestamp: number;
   triggerReasons: string[];
+  suggestedEntry?: number;     // support/consolidation level — best buy price
+  suggestedExit?: number;      // resistance level — best sell target
+  supportLevel?: number;
+  resistanceLevel?: number;
 }
 
 export interface CatalystScore {

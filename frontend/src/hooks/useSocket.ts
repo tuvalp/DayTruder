@@ -13,8 +13,11 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:4000';
 const MAX_LOGS = 500;
 
 const DEFAULT_SETTINGS: AppSettings = {
-  maxRiskPerTradePct: 1.5,
-  stopLossPct: 4,
+  maxRiskPerTradePct: 2,
+  stopLossPct: 7,
+  minTakeProfitPct: 25,
+  commissionPerSide: 5,
+  minNetProfitDollar: 20,
   maxOpenPositions: 5,
   maxDailyLossPct: 6,
   minPrice: 1,
