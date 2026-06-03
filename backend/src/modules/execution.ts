@@ -35,6 +35,9 @@ export class ExecutionModule {
   private posReqIdCounter = 5000;
   private posReqIdToSymbol = new Map<number, string>();
   private onPositionsChange?: () => void;
+  // Maps IBKR parentOrderId → symbol for fill confirmation
+  private entryOrderToSymbol = new Map<number, string>();
+  onEntryFilled?: (symbol: string, avgFillPrice: number) => void;
 
   constructor(ib: IBApi) {
     this.ib = ib;
@@ -388,7 +391,7 @@ export class ExecutionModule {
       unrealizedPnlPct: 0,
       stopLoss,
       takeProfits,
-      status: 'open',
+      status: 'pending',
       openedAt: Date.now(),
       catalystScore: catalyst,
       orders: [entryOrder],
@@ -400,8 +403,9 @@ export class ExecutionModule {
     };
 
     this.positions.set(symbol, position);
+    this.entryOrderToSymbol.set(parentId, symbol);
     this.subscribePositionMktData(symbol);
-    logger.success('execution', `Position registered: ${symbol} — IBKR order IDs ${parentId}/${slId}/${tpId}`);
+    logger.success('execution', `Order pending: ${symbol} — waiting for fill (IBKR IDs ${parentId}/${slId}/${tpId})`);
     return position;
   }
 
@@ -532,6 +536,28 @@ export class ExecutionModule {
     }
   }
 
+  /** Cancel a pending entry order and remove the position record. */
+  cancelPendingEntry(symbol: string): void {
+    const pos = this.positions.get(symbol);
+    if (!pos || pos.status !== 'pending') return;
+
+    // Cancel all orders attached to the position
+    for (const order of pos.orders) {
+      const orderId = Number(order.brokerOrderId);
+      if (!isNaN(orderId)) {
+        try { this.ib.cancelOrder(orderId, ''); } catch { /* ignore */ }
+      }
+    }
+
+    // Remove from entry tracking and positions map
+    for (const [id, sym] of this.entryOrderToSymbol.entries()) {
+      if (sym === symbol) { this.entryOrderToSymbol.delete(id); break; }
+    }
+    this.cancelPositionMktData(symbol);
+    this.positions.delete(symbol);
+    logger.warn('execution', `${symbol}: pending entry cancelled and position removed`);
+  }
+
   /** Sync open position prices from IBKR portfolio events. */
   syncPositionPrice(symbol: string, currentPrice: number) {
     const pos = this.positions.get(symbol);
@@ -603,7 +629,7 @@ export class ExecutionModule {
   }
 
   getOpenPositions(): Position[] {
-    return Array.from(this.positions.values()).filter((p) => p.status === 'open');
+    return Array.from(this.positions.values()).filter((p) => p.status === 'open' || p.status === 'pending');
   }
 
   private onOrderStatus(
@@ -624,7 +650,17 @@ export class ExecutionModule {
         order.filledAt = Date.now();
         pos.avgPrice = avgFillPrice || pos.avgPrice;
         logger.success('execution', `Order ${orderId} FILLED: ${filled} @ $${avgFillPrice}`);
+
+        // Entry (BUY) fill → promote position from pending → open
+        const entrySymbol = this.entryOrderToSymbol.get(orderId);
+        if (entrySymbol && pos.symbol === entrySymbol && pos.status === 'pending') {
+          pos.status = 'open';
+          this.entryOrderToSymbol.delete(orderId);
+          logger.success('execution', `${entrySymbol} position OPENED — entry filled @ $${avgFillPrice}`);
+          this.onEntryFilled?.(entrySymbol, avgFillPrice);
+        }
       }
+      break;
     }
   }
 

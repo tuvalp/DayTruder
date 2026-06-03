@@ -12,6 +12,7 @@ const STRATEGY_CONFIG: Record<SymbolStrategy, { label: string; class: string }> 
   alert:       { label: '🚨 Alert',    class: 'text-accent-yellow bg-accent-yellow/10 border-accent-yellow/40' },
   researching: { label: '🔬 Research', class: 'text-accent-blue bg-accent-blue/10 border-accent-blue/40' },
   sizing:      { label: '⚖ Sizing',   class: 'text-accent-purple bg-accent-purple/10 border-accent-purple/40' },
+  ordering:    { label: '⏳ Ordering', class: 'text-accent-yellow bg-accent-yellow/10 border-accent-yellow/40' },
   positioned:  { label: '✅ In Trade', class: 'text-accent-green bg-accent-green/10 border-accent-green/40' },
   rejected:    { label: 'Rejected',    class: 'text-accent-red bg-accent-red/10 border-accent-red/30' },
 };

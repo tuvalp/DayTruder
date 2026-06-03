@@ -1,5 +1,5 @@
 export type AgentState = 'idle' | 'scanning' | 'researching' | 'executing' | 'monitoring' | 'paused';
-export type SymbolStrategy = 'watching' | 'alert' | 'researching' | 'sizing' | 'positioned' | 'rejected';
+export type SymbolStrategy = 'watching' | 'alert' | 'researching' | 'sizing' | 'ordering' | 'positioned' | 'rejected';
 
 export interface WatchlistEntry {
   symbol: string;

@@ -216,13 +216,39 @@ export class AlphaAgent extends EventEmitter {
 
     const position = await this.execution.submitBracketOrder(sizing, catalyst);
     if (position) {
-      this.scanner.setStrategy(alert.symbol, 'positioned');
+      this.scanner.setStrategy(alert.symbol, 'ordering');
       logger.trade(
         'system',
-        `✅ TRADE OPENED: ${alert.symbol} | ${sizing.shares} sh | SL $${sizing.stopLoss.toFixed(2)} | TP1 $${sizing.takeProfits[0].toFixed(2)}`,
+        `⏳ ORDER SUBMITTED: ${alert.symbol} | ${sizing.shares} sh @ ~$${sizing.entryPrice.toFixed(2)} | SL $${sizing.stopLoss.toFixed(2)} | TP1 $${sizing.takeProfits[0].toFixed(2)} — waiting for fill`,
         { position }
       );
       this.emit('trade', position);
+
+      // When entry fills → mark positioned
+      this.execution.onEntryFilled = (symbol, fillPrice) => {
+        logger.trade('system', `✅ POSITION OPEN: ${symbol} filled @ $${fillPrice.toFixed(2)}`);
+        this.scanner.setStrategy(symbol, 'positioned');
+        this.emitPositions();
+        this.setState('monitoring');
+      };
+
+      // Cancel unfilled entry after 60 s — re-enter pipeline via alert re-trigger
+      const cancelTimer = setTimeout(async () => {
+        const stillPending = this.execution.getOpenPositions()
+          .find((p) => p.symbol === alert.symbol && p.status === 'pending');
+        if (!stillPending) return;
+        logger.warn('execution', `${alert.symbol} entry not filled after 60 s — cancelling order`);
+        await this.execution.cancelPendingEntry(alert.symbol);
+        this.scanner.setStrategy(alert.symbol, 'watching');
+        this.setState(this.execution.getOpenPositions().filter((p) => p.status === 'open').length > 0 ? 'monitoring' : 'scanning');
+      }, 60_000);
+
+      // Clear timer if filled before timeout
+      const origFilled = this.execution.onEntryFilled;
+      this.execution.onEntryFilled = (symbol, fillPrice) => {
+        if (symbol === alert.symbol) clearTimeout(cancelTimer);
+        origFilled(symbol, fillPrice);
+      };
     }
 
     this.setState(this.execution.getOpenPositions().length > 0 ? 'monitoring' : 'scanning');
@@ -282,7 +308,7 @@ export class AlphaAgent extends EventEmitter {
    */
   private manageOpenPositions() {
     const s = settingsStore.get();
-    const positions = this.execution.getOpenPositions();
+    const positions = this.execution.getOpenPositions().filter((p) => p.status === 'open');
     if (positions.length === 0) return;
 
     let changed = false;

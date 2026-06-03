@@ -1,9 +1,9 @@
 export type TradeSide = 'buy' | 'sell';
 export type OrderType = 'market' | 'limit' | 'stop' | 'stop_limit';
 export type OrderStatus = 'pending' | 'filled' | 'partially_filled' | 'cancelled' | 'rejected';
-export type PositionStatus = 'open' | 'closed';
+export type PositionStatus = 'pending' | 'open' | 'closed';
 export type AgentState = 'idle' | 'scanning' | 'researching' | 'executing' | 'monitoring' | 'paused';
-export type SymbolStrategy = 'watching' | 'alert' | 'researching' | 'sizing' | 'positioned' | 'rejected';
+export type SymbolStrategy = 'watching' | 'alert' | 'researching' | 'sizing' | 'ordering' | 'positioned' | 'rejected';
 
 export interface WatchlistEntry {
   symbol: string;
