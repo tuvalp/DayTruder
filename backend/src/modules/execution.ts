@@ -536,6 +536,25 @@ export class ExecutionModule {
     }
   }
 
+  /**
+   * Called when IBKR fires error 202 (order cancelled) for a given orderId.
+   * If the orderId belongs to a pending entry, cleans up and returns the symbol.
+   * Returns null if the cancellation is for a non-entry order (SL/TP/partial sell).
+   */
+  handleOrderCancelled(orderId: number): string | null {
+    const symbol = this.entryOrderToSymbol.get(orderId);
+    if (!symbol) return null;  // not an entry order — ignore
+
+    const pos = this.positions.get(symbol);
+    if (pos && pos.status === 'pending') {
+      this.entryOrderToSymbol.delete(orderId);
+      this.cancelPositionMktData(symbol);
+      this.positions.delete(symbol);
+      logger.warn('execution', `${symbol}: entry order ${orderId} cancelled by IBKR — position removed`);
+    }
+    return symbol;
+  }
+
   /** Cancel a pending entry order and remove the position record. */
   cancelPendingEntry(symbol: string): void {
     const pos = this.positions.get(symbol);
