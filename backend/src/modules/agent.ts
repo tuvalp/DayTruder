@@ -167,16 +167,13 @@ export class AlphaAgent extends EventEmitter {
       return;
     }
 
-    // ── Available cash gate ───────────────────────────────────────────────────
+    // ── Minimum cash gate: block only if truly nothing to trade with ──────────
     const availableCash = this.execution.getAvailableCash();
-    if (availableCash > 0) {
-      const s = settingsStore.get();
-      const needed = this.cachedLiquidity * (s.maxPositionSizePct / 100) * 0.7; // 70% of target
-      if (availableCash < needed) {
-        logger.warn('risk', `${alert.symbol} rejected — insufficient cash: $${availableCash.toLocaleString()} available, need ~$${needed.toFixed(0)}`);
-        return;
-      }
+    if (availableCash > 0 && availableCash < 50) {
+      logger.warn('risk', `${alert.symbol} rejected — available cash $${availableCash.toFixed(0)} is too low to trade`);
+      return;
     }
+    // Position sizing and cash-cap happen inside risk.size() — no pre-rejection needed
 
     this.scanner.setStrategy(alert.symbol, 'alert');
 
