@@ -197,17 +197,19 @@ export class MarketScanner extends EventEmitter {
   }
 
   private attachTickHandlers() {
+    // tickType 4 = real-time last, 68 = delayed last (reqMarketDataType 3/4)
     this.ib.on(EventName.tickPrice, (reqId: number, tickType: number, price: number) => {
       const symbol = this.reqIdToSymbol.get(reqId);
       if (!symbol || price <= 0) return;
-      if (tickType === 4) this.onLastPrice(symbol, price);
+      if (tickType === 4 || tickType === 68) this.onLastPrice(symbol, price);
     });
 
+    // tickType 8 = real-time volume, 74 = delayed volume
     (this.ib as unknown as { on: (e: string, h: (...a: unknown[]) => void) => void })
       .on('tickSize', (reqId: unknown, tickType: unknown, size: unknown) => {
         const symbol = this.reqIdToSymbol.get(reqId as number);
         if (!symbol) return;
-        if (tickType === 8) this.onVolume(symbol, Number(size));
+        if (tickType === 8 || tickType === 74) this.onVolume(symbol, Number(size));
       });
   }
 

@@ -64,7 +64,9 @@ export class ExecutionModule {
 
     ib.on('tickPrice', (reqId: unknown, tickType: unknown, price: unknown) => {
       const symbol = this.posReqIdToSymbol.get(reqId as number);
-      if (!symbol || (tickType as number) !== 4 || (price as number) <= 0) return;
+      const tt = tickType as number;
+      // 4 = real-time last, 68 = delayed last
+      if (!symbol || (tt !== 4 && tt !== 68) || (price as number) <= 0) return;
       this.syncPositionPrice(symbol, price as number);
       this.onPositionsChange?.();
     });
