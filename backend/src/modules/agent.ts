@@ -103,6 +103,7 @@ export class AlphaAgent extends EventEmitter {
     });
 
     this.syncInterval = setInterval(() => this.syncAndEmit(), 5000);
+    setInterval(() => this.manageOpenPositions(), 5000);
     logger.success('system', '✅ AlphaAgent is LIVE and scanning the market.');
   }
 
@@ -237,6 +238,88 @@ export class AlphaAgent extends EventEmitter {
   emitPositions() {
     this.emit('positions', this.execution.getOpenPositions());
     this.emit('orders', this.execution.getOpenOrders());
+  }
+
+  /**
+   * Active position management — runs every 5 s.
+   *
+   * For each open position:
+   *   1. Track session high
+   *   2. TP1 hit → sell 50%, move stop to breakeven
+   *   3. TP2 hit → sell 25% more, trail stop above TP1
+   *   4. Reversal → if up > 10% then pulls back 6%+ from session high, exit to lock gains
+   *   5. Trailing stop → once up 20%, trail by 8% below session high
+   */
+  private manageOpenPositions() {
+    const s = settingsStore.get();
+    const positions = this.execution.getOpenPositions();
+    if (positions.length === 0) return;
+
+    let changed = false;
+
+    for (const pos of positions) {
+      const price = pos.currentPrice;
+      if (price <= 0 || pos.avgPrice <= 0) continue;
+
+      const pctFromEntry = ((price - pos.avgPrice) / pos.avgPrice) * 100;
+      const tp1 = pos.takeProfits[0];
+      const tp2 = pos.takeProfits[1];
+
+      // Track session high
+      if (!pos.sessionHigh || price > pos.sessionHigh) {
+        pos.sessionHigh = price;
+      }
+
+      const pctFromHigh = pos.sessionHigh > 0
+        ? ((price - pos.sessionHigh) / pos.sessionHigh) * 100
+        : 0;
+
+      // ── TP1: sell half, move stop to breakeven ──────────────────────────────
+      if (!pos.tp1Hit && tp1 && price >= tp1) {
+        pos.tp1Hit = true;
+        const half = Math.max(1, Math.floor(pos.shares / 2));
+        this.execution.partialSell(pos.symbol, half, `TP1 hit @ $${price.toFixed(2)} (+${pctFromEntry.toFixed(1)}%)`);
+        this.execution.adjustStop(pos.symbol, pos.avgPrice);  // stop → breakeven
+        logger.trade('system', `📈 ${pos.symbol} TP1 — sold ${half} sh, stop → breakeven $${pos.avgPrice.toFixed(2)}`);
+        changed = true;
+      }
+
+      // ── TP2: sell half of remainder, trail stop above TP1 ──────────────────
+      else if (pos.tp1Hit && !pos.tp2Hit && tp2 && price >= tp2) {
+        pos.tp2Hit = true;
+        const quarter = Math.max(1, Math.floor(pos.shares / 2));
+        this.execution.partialSell(pos.symbol, quarter, `TP2 hit @ $${price.toFixed(2)} (+${pctFromEntry.toFixed(1)}%)`);
+        if (tp1) this.execution.adjustStop(pos.symbol, tp1);  // stop → TP1 level
+        logger.trade('system', `🚀 ${pos.symbol} TP2 — sold ${quarter} sh, stop → TP1 $${tp1?.toFixed(2)}`);
+        changed = true;
+      }
+
+      // ── Trailing stop: once up 20%+, trail 8% below session high ───────────
+      else if (pctFromEntry > 20 && pos.sessionHigh) {
+        const trailStop = parseFloat((pos.sessionHigh * 0.92).toFixed(2));
+        if (trailStop > pos.stopLoss) {
+          this.execution.adjustStop(pos.symbol, trailStop);
+          logger.info('system', `↗ ${pos.symbol} trailing stop → $${trailStop.toFixed(2)} (high $${pos.sessionHigh.toFixed(2)})`);
+          changed = true;
+        }
+      }
+
+      // ── Reversal exit: profitable position pulls back hard from session high ─
+      // Only fires if we're up enough to still profit after commissions
+      if (
+        pos.sessionHigh &&
+        pctFromEntry > (s.stopLossPct / 2) &&  // already more than half a stop above entry
+        pctFromHigh < -6 &&                     // pulled back 6%+ from high
+        !pos.tp1Hit                              // haven't taken any profit yet
+      ) {
+        logger.trade('system', `⚠️  ${pos.symbol} reversal detected — up ${pctFromEntry.toFixed(1)}% but -${Math.abs(pctFromHigh).toFixed(1)}% from high. Exiting to lock profit.`);
+        this.execution.closePosition(pos.symbol);
+        this.scanner.setStrategy(pos.symbol, 'watching');
+        changed = true;
+      }
+    }
+
+    if (changed) this.emitPositions();
   }
 
   private setState(state: AgentState) {

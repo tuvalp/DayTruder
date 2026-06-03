@@ -305,7 +305,7 @@ export class MarketScanner extends EventEmitter {
     if (!surgeOk && !isBreakout) return;
 
     const lastAlert = this.alertCooldown.get(symbol) ?? 0;
-    if (ts - lastAlert < 5 * 60_000) return;
+    if (ts - lastAlert < 2 * 60_000) return;
     this.alertCooldown.set(symbol, ts);
 
     // ── Best entry / exit suggestion ──────────────────────────────────────────

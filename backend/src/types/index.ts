@@ -102,6 +102,13 @@ export interface Position {
   realizedPnl?: number;
   catalystScore: CatalystScore;
   orders: Order[];
+  // Active management state
+  sessionHigh?: number;      // highest price seen since entry — for trailing/reversal
+  tp1Hit?: boolean;
+  tp2Hit?: boolean;
+  slOrderId?: number;        // IBKR orderId of the live stop order — for modification
+  tp1OrderId?: number;
+  tp2OrderId?: number;
 }
 
 export interface PortfolioSnapshot {

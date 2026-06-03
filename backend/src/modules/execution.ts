@@ -390,6 +390,11 @@ export class ExecutionModule {
       openedAt: Date.now(),
       catalystScore: catalyst,
       orders: [entryOrder],
+      sessionHigh: entryPrice,
+      tp1Hit: false,
+      tp2Hit: false,
+      slOrderId: slId,
+      tp1OrderId: tpId,
     };
 
     this.positions.set(symbol, position);
@@ -434,6 +439,93 @@ export class ExecutionModule {
       return true;
     } catch (err) {
       logger.error('execution', `Failed to close ${symbol}: ${String(err)}`);
+      return false;
+    }
+  }
+
+  /**
+   * Modify an existing stop order to a new price (cancel + replace).
+   * IBKR supports in-place modification by reusing the same orderId.
+   */
+  adjustStop(symbol: string, newStopPrice: number): boolean {
+    const pos = this.positions.get(symbol);
+    if (!pos || !pos.slOrderId || this.orderIdBase === null) return false;
+
+    const contract: Contract = { symbol, secType: SecType.STK, currency: 'USD', exchange: 'SMART' };
+    const newStop = parseFloat(newStopPrice.toFixed(2));
+
+    try {
+      // IBKR modifies an order by placing it again with the same orderId
+      this.ib.placeOrder(pos.slOrderId, contract, {
+        orderId: pos.slOrderId,
+        action: OrderAction.SELL,
+        orderType: IBOrderType.STP,
+        totalQuantity: pos.shares,
+        auxPrice: newStop,
+        tif: TimeInForce.GTC,
+        transmit: true,
+        account: this.account,
+      });
+      pos.stopLoss = newStop;
+      logger.trade('execution', `${symbol}: stop adjusted to $${newStop.toFixed(2)}`);
+      return true;
+    } catch (err) {
+      logger.error('execution', `adjustStop failed for ${symbol}: ${err}`);
+      return false;
+    }
+  }
+
+  /** Sell a partial number of shares at market price. */
+  partialSell(symbol: string, sharesToSell: number, reason: string): boolean {
+    const pos = this.positions.get(symbol);
+    if (!pos || sharesToSell <= 0 || this.orderIdBase === null) return false;
+
+    const qty = Math.min(sharesToSell, pos.shares);
+    const orderId = this.orderIdBase + this.nextOrderIdOffset++;
+    const contract: Contract = { symbol, secType: SecType.STK, currency: 'USD', exchange: 'SMART' };
+
+    try {
+      this.ib.placeOrder(orderId, contract, {
+        orderId,
+        action: OrderAction.SELL,
+        orderType: IBOrderType.MKT,
+        totalQuantity: qty,
+        tif: TimeInForce.DAY,
+        transmit: true,
+        account: this.account,
+      });
+
+      const pnl = (pos.currentPrice - pos.avgPrice) * qty;
+      pos.shares -= qty;
+      pos.realizedPnl = (pos.realizedPnl ?? 0) + pnl;
+
+      if (pos.shares <= 0) {
+        pos.status = 'closed';
+        pos.closedAt = Date.now();
+        this.cancelPositionMktData(symbol);
+      } else {
+        // Adjust existing SL order quantity to match remaining shares
+        if (pos.slOrderId) {
+          const contract2: Contract = { symbol, secType: SecType.STK, currency: 'USD', exchange: 'SMART' };
+          try {
+            this.ib.placeOrder(pos.slOrderId, contract2, {
+              orderId: pos.slOrderId,
+              action: OrderAction.SELL,
+              orderType: IBOrderType.STP,
+              totalQuantity: pos.shares,
+              auxPrice: pos.stopLoss,
+              tif: TimeInForce.GTC,
+              transmit: true,
+              account: this.account,
+            });
+          } catch { /* non-fatal */ }
+        }
+      }
+
+      logger.trade('execution', `${symbol}: partial sell ${qty} sh @ ~$${pos.currentPrice.toFixed(2)} — ${reason} | PnL $${pnl.toFixed(0)}`);
+      return true;
+    } catch (err) {
+      logger.error('execution', `partialSell failed for ${symbol}: ${err}`);
       return false;
     }
   }
