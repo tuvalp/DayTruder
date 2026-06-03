@@ -3,6 +3,7 @@ import EventEmitter from 'events';
 export interface AppSettings {
   // Risk
   maxRiskPerTradePct: number;
+  maxPositionSizePct: number;  // % of portfolio to deploy per trade (50–100%)
   stopLossPct: number;         // 5–10% for penny stocks
   minTakeProfitPct: number;    // 20–50% target profit
   commissionPerSide: number;   // $ per order leg (buy = 1 side, sell = 1 side)
@@ -21,6 +22,7 @@ export interface AppSettings {
 
 const DEFAULTS: AppSettings = {
   maxRiskPerTradePct: 2,
+  maxPositionSizePct: 75,
   stopLossPct: 7,
   minTakeProfitPct: 25,
   commissionPerSide: 5,

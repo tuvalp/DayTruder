@@ -52,12 +52,8 @@ export class RiskEngine {
       (s.minNetProfitDollar + totalCommission) / (entryPrice * (s.minTakeProfitPct / 100))
     );
 
-    // How many shares can we actually buy within our risk budget?
-    const stopLossPerShare = entryPrice * (s.stopLossPct / 100);
-    const dollarRisk = this.accountLiquidity * (s.maxRiskPerTradePct / 100);
-    const maxSharesByRisk = Math.floor(dollarRisk / stopLossPerShare);
-    const maxSharesByAccount = Math.floor((this.accountLiquidity * 0.25) / entryPrice);
-    const maxShares = Math.min(maxSharesByRisk, maxSharesByAccount);
+    // How many shares will actually be bought (portfolio-pct sizing)
+    const maxShares = Math.floor((this.accountLiquidity * (s.maxPositionSizePct / 100)) / entryPrice);
 
     if (maxShares < minSharesForMargin) {
       const grossAtMax = maxShares * entryPrice * (s.minTakeProfitPct / 100);
@@ -94,24 +90,21 @@ export class RiskEngine {
     const actualEntry = alert?.suggestedEntry ?? entryPrice;
     const totalCommission = s.commissionPerSide * 2;
 
-    // Scale risk by confidence — floor at 50%
-    const activeRiskMultiplier = Math.max(0.5, Math.min(catalyst.confidence, 1.0));
-    const effectiveRiskPct = s.maxRiskPerTradePct * activeRiskMultiplier;
-    const dollarRisk = this.accountLiquidity * (effectiveRiskPct / 100);
-
     const stopLossPrice = actualEntry * (1 - s.stopLossPct / 100);
-    const stopLossPerShare = actualEntry - stopLossPrice;
-    let shares = Math.floor(dollarRisk / stopLossPerShare);
+
+    // ── Position sizing: deploy maxPositionSizePct of portfolio ──────────────
+    // Scale down slightly on low-confidence setups (floor 70% of target size)
+    const confidenceScale = Math.max(0.7, Math.min(catalyst.confidence, 1.0));
+    const deployPct = s.maxPositionSizePct * confidenceScale;
+    const positionValue = this.accountLiquidity * (deployPct / 100);
+    let shares = Math.floor(positionValue / actualEntry);
 
     if (shares < 1) {
       logger.warn('risk', `${symbol} rejected — computed shares < 1.`);
       return null;
     }
 
-    const maxSharesByAccount = Math.floor((this.accountLiquidity * 0.25) / actualEntry);
-    if (shares > maxSharesByAccount) {
-      shares = maxSharesByAccount;
-    }
+    const dollarRisk = shares * (actualEntry - stopLossPrice);
 
     // Ensure position is large enough to profit after commissions
     const minSharesForMargin = Math.ceil(

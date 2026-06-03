@@ -16,6 +16,7 @@ const MAX_LOGS = 500;
 
 const DEFAULT_SETTINGS: AppSettings = {
   maxRiskPerTradePct: 2,
+  maxPositionSizePct: 75,
   stopLossPct: 7,
   minTakeProfitPct: 25,
   commissionPerSide: 5,

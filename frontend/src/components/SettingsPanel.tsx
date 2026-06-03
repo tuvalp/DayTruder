@@ -21,7 +21,8 @@ interface FieldDef {
 
 const FIELDS: FieldDef[] = [
   // Risk
-  { key: 'maxRiskPerTradePct',  label: 'Max Risk / Trade',       min: 0.1, max: 100, step: 0.1, unit: '%', section: 'risk',    description: 'Max % of account risked on a single trade' },
+  { key: 'maxRiskPerTradePct',  label: 'Max Risk / Trade',       min: 0.1, max: 100, step: 0.1, unit: '%', section: 'risk',    description: 'Legacy field — position size is now set by Portfolio Deploy %' },
+  { key: 'maxPositionSizePct',  label: 'Portfolio Deploy %',     min: 10,  max: 100, step: 5,   unit: '%', section: 'risk',    description: '% of total portfolio value to spend on each trade (50–100% for penny stocks)' },
   { key: 'stopLossPct',         label: 'Stop-Loss',              min: 5,   max: 15,  step: 0.5, unit: '%', section: 'risk',    description: 'Hard stop-loss below entry (penny stocks: 5–10%)' },
   { key: 'minTakeProfitPct',    label: 'Min Take-Profit',        min: 10,  max: 50,  step: 1,   unit: '%', section: 'risk',    description: 'Minimum profit target — TP1 level (penny stocks: 20–50%)' },
   { key: 'commissionPerSide',   label: 'Commission / Side',      min: 0,   max: 20,  step: 0.5, unit: '$', section: 'risk',    description: 'Broker fee per order leg ($5 buy + $5 sell = $10 total)' },
