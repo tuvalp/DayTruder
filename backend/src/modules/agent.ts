@@ -3,6 +3,7 @@ import { IBApi, EventName } from '@stoqey/ib';
 import { MarketScanner } from './scanner';
 import { PolygonScreener } from './screener';
 import { ResearchAgent } from './research';
+import { isMarketOpen, getMarketStatus } from '../utils/marketHours';
 import { RiskEngine } from './risk';
 import { ExecutionModule } from './execution';
 import { config } from '../config';
@@ -102,6 +103,19 @@ export class AlphaAgent extends EventEmitter {
       this.scanner.ingestSymbols(results.map((r) => ({ symbol: r.symbol, float: r.float, price: r.price })));
     });
 
+    const status = getMarketStatus();
+    const openMsg = status === 'open'
+      ? '🟢 Market is OPEN — entries enabled'
+      : `🔴 Market is ${status.toUpperCase()} — entries will be blocked until 9:30 AM ET`;
+    logger.info('system', openMsg);
+
+    // Emit market status every minute
+    setInterval(() => {
+      const s = getMarketStatus();
+      this.emit('marketStatus', s);
+    }, 60_000);
+    this.emit('marketStatus', status);
+
     this.syncInterval = setInterval(() => this.syncAndEmit(), 5000);
     setInterval(() => this.manageOpenPositions(), 5000);
     logger.success('system', '✅ AlphaAgent is LIVE and scanning the market.');
@@ -146,6 +160,23 @@ export class AlphaAgent extends EventEmitter {
   private async handleAlert(alert: ScannerAlert) {
     if (this.state === 'paused') return;
     if (this.risk.isCircuitBreakerActive) return;
+
+    // ── Market hours gate ─────────────────────────────────────────────────────
+    if (!isMarketOpen()) {
+      logger.info('system', `${alert.symbol} alert ignored — market is ${getMarketStatus()}`);
+      return;
+    }
+
+    // ── Available cash gate ───────────────────────────────────────────────────
+    const availableCash = this.execution.getAvailableCash();
+    if (availableCash > 0) {
+      const s = settingsStore.get();
+      const needed = this.cachedLiquidity * (s.maxPositionSizePct / 100) * 0.7; // 70% of target
+      if (availableCash < needed) {
+        logger.warn('risk', `${alert.symbol} rejected — insufficient cash: $${availableCash.toLocaleString()} available, need ~$${needed.toFixed(0)}`);
+        return;
+      }
+    }
 
     this.scanner.setStrategy(alert.symbol, 'alert');
 
@@ -216,9 +247,11 @@ export class AlphaAgent extends EventEmitter {
     }
     const liquidity = this.cachedLiquidity;
     this.risk.updateLiquidity(liquidity);
+    this.risk.updateAvailableCash(this.execution.getAvailableCash());
 
     const snapshot: PortfolioSnapshot = {
       netLiquidity: liquidity,
+      availableCash: this.execution.getAvailableCash(),
       dailyRealizedPnl: 0,
       dailyUnrealizedPnl: dailyUnrealized,
       dailyPnlPct: ((liquidity - this.startingLiquidity) / this.startingLiquidity) * 100,

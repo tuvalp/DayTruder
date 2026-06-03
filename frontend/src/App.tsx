@@ -15,7 +15,7 @@ import { fmt } from './utils/format';
 type Tab = 'dashboard' | 'settings';
 
 export default function App() {
-  const { connected, agentState, portfolio, performance, logs, settings, watchlist, positions, orders, startAgent, pauseAgent, updateSettings } =
+  const { connected, agentState, portfolio, performance, logs, settings, watchlist, positions, orders, marketStatus, startAgent, pauseAgent, updateSettings } =
     useSocket();
 
   const [tab, setTab] = useState<Tab>('dashboard');
@@ -33,6 +33,8 @@ export default function App() {
       <Header
         connected={connected}
         agentState={agentState}
+        marketStatus={marketStatus}
+        availableCash={portfolio?.availableCash ?? 0}
         onStart={startAgent}
         onPause={pauseAgent}
       />

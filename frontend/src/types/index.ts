@@ -55,6 +55,7 @@ export interface Position {
 
 export interface PortfolioSnapshot {
   netLiquidity: number;
+  availableCash: number;
   dailyRealizedPnl: number;
   dailyUnrealizedPnl: number;
   dailyPnlPct: number;

@@ -5,12 +5,17 @@ import type { PositionSizing, CatalystScore, ScannerAlert } from '../types';
 export class RiskEngine {
   private accountLiquidity: number;
   private startOfDayLiquidity: number;
+  private availableCash = 0;
   private dailyRealizedPnl = 0;
   private circuitBreakerTripped = false;
 
   constructor(accountLiquidity: number) {
     this.accountLiquidity = accountLiquidity;
     this.startOfDayLiquidity = accountLiquidity;
+  }
+
+  updateAvailableCash(cash: number) {
+    this.availableCash = cash;
   }
 
   recordPnl(pnl: number) {
@@ -93,10 +98,17 @@ export class RiskEngine {
     const stopLossPrice = actualEntry * (1 - s.stopLossPct / 100);
 
     // ── Position sizing: deploy maxPositionSizePct of portfolio ──────────────
-    // Scale down slightly on low-confidence setups (floor 70% of target size)
+    // Scale down on low-confidence setups (floor 70% of target)
     const confidenceScale = Math.max(0.7, Math.min(catalyst.confidence, 1.0));
     const deployPct = s.maxPositionSizePct * confidenceScale;
-    const positionValue = this.accountLiquidity * (deployPct / 100);
+    let positionValue = this.accountLiquidity * (deployPct / 100);
+
+    // Cap to available cash — never deploy money we don't have
+    if (this.availableCash > 0 && positionValue > this.availableCash) {
+      logger.info('risk', `${symbol} position capped to available cash $${this.availableCash.toLocaleString()} (wanted $${positionValue.toFixed(0)})`);
+      positionValue = this.availableCash * 0.99; // leave 1% buffer for fees
+    }
+
     let shares = Math.floor(positionValue / actualEntry);
 
     if (shares < 1) {

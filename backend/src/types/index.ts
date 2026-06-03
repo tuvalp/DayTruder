@@ -113,11 +113,12 @@ export interface Position {
 
 export interface PortfolioSnapshot {
   netLiquidity: number;
+  availableCash: number;
   dailyRealizedPnl: number;
   dailyUnrealizedPnl: number;
   dailyPnlPct: number;
   openPositions: Position[];
-  activeRiskMultiplier: number;  // scales down sizing when losing
+  activeRiskMultiplier: number;
   snapshotAt: number;
 }
 

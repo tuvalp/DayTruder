@@ -541,24 +541,42 @@ export class ExecutionModule {
     pos.unrealizedPnlPct = ((currentPrice - pos.avgPrice) / pos.avgPrice) * 100;
   }
 
+  private availableCash = 0;
+
+  getAvailableCash(): number { return this.availableCash; }
+
+  /** Fetch NetLiquidation AND AvailableFunds in one request. */
   async getAccountLiquidity(): Promise<number> {
     await this.ensureAccount();
 
     return new Promise((resolve, reject) => {
       const reqId = this.nextOrderIdOffset + 8000;
+      let liquidity = 0;
+
       const handler = (rId: number, _account: string, tag: string, value: string) => {
-        if (rId !== reqId || tag !== 'NetLiquidation') return;
+        if (rId !== reqId) return;
+        if (tag === 'NetLiquidation') liquidity = parseFloat(value);
+        if (tag === 'AvailableFunds') {
+          this.availableCash = parseFloat(value);
+          logger.info('execution', `Available cash (buying power): $${this.availableCash.toLocaleString()}`);
+        }
+      };
+
+      const end = (_rId: number) => {
+        if (_rId !== reqId) return;
         this.ib.off(EventName.accountSummary, handler);
-        this.ib.cancelAccountSummary(reqId);
+        this.ib.off(EventName.accountSummaryEnd, end);
         clearTimeout(timer);
-        const liquidity = parseFloat(value);
         resolve(liquidity);
       };
+
       this.ib.on(EventName.accountSummary, handler);
-      this.ib.reqAccountSummary(reqId, 'All', 'NetLiquidation');
+      this.ib.on(EventName.accountSummaryEnd, end);
+      this.ib.reqAccountSummary(reqId, 'All', 'NetLiquidation,AvailableFunds');
 
       const timer = setTimeout(() => {
         this.ib.off(EventName.accountSummary, handler);
+        this.ib.off(EventName.accountSummaryEnd, end);
         this.ib.cancelAccountSummary(reqId);
         reject(new Error(`Account summary timed out — check TWS API permissions`));
       }, 15_000);

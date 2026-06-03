@@ -40,8 +40,9 @@ export function useSocket() {
   const [logs, setLogs] = useState<AgentLogEntry[]>([]);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
-  const [positions, setPositions] = useState<Position[]>([]);
-  const [orders,    setOrders]    = useState<Order[]>([]);
+  const [positions,     setPositions]     = useState<Position[]>([]);
+  const [orders,        setOrders]        = useState<Order[]>([]);
+  const [marketStatus,  setMarketStatus]  = useState<string>('unknown');
 
   useEffect(() => {
     const socket = io(BACKEND_URL, { transports: ['websocket'] });
@@ -54,8 +55,9 @@ export function useSocket() {
     socket.on('performance', (h: PerformanceDataPoint[]) => setPerformance(h));
     socket.on('settings',  (s: AppSettings)      => setSettings(s));
     socket.on('watchlist', (s: WatchlistEntry[])  => setWatchlist(s));
-    socket.on('positions', (s: Position[])        => setPositions(s));
-    socket.on('orders',    (s: Order[])           => setOrders(s));
+    socket.on('positions',     (s: Position[]) => setPositions(s));
+    socket.on('orders',        (s: Order[])    => setOrders(s));
+    socket.on('marketStatus',  (s: string)     => setMarketStatus(s));
     socket.on('log', (entry: AgentLogEntry) =>
       setLogs((prev) => {
         const next = [...prev, entry];
@@ -72,5 +74,5 @@ export function useSocket() {
     socketRef.current?.emit('updateSettings', patch);
   }, []);
 
-  return { connected, agentState, portfolio, performance, logs, settings, watchlist, positions, orders, startAgent, pauseAgent, updateSettings };
+  return { connected, agentState, portfolio, performance, logs, settings, watchlist, positions, orders, marketStatus, startAgent, pauseAgent, updateSettings };
 }
