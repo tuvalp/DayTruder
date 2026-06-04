@@ -83,10 +83,14 @@ export class MarketScanner extends EventEmitter {
       this.symbolLastSeen.set(symbol, now);
       if (!this.symbolToReqId.has(symbol)) {
         this.subscribe(symbol, float, price);
-      } else if (float) {
-        // Update float if screener provided a value
+      } else {
+        // Symbol already subscribed — feed fresh screener price as a tick so
+        // evaluate() runs every 30 s regardless of IBKR delayed-data frequency
         const state = this.tickState.get(symbol);
-        if (state) state.float = float;
+        if (state) {
+          if (float) state.float = float;
+          if (price && price > 0) this.onLastPrice(symbol, price);
+        }
       }
     }
 
