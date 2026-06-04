@@ -60,7 +60,7 @@ export class AlphaAgent extends EventEmitter {
 
     this.ib.on(EventName.error, (_err, code, reqId) => {
       // Informational / transient codes — suppress
-      if ([162, 300, 365, 2104, 2106, 2158, 2119, 10089, 10167, 10168].includes(code)) return;
+      if ([162, 300, 365, 2104, 2106, 2158, 2119, 10089, 10147, 10167, 10168].includes(code)) return;
       // 200 = no security definition — symbol is unresolvable (warrant, OTC, etc.)
       if ((code as unknown as number) === 200) {
         const sym = this.scanner.dropByReqId(reqId);
