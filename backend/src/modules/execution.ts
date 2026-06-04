@@ -41,8 +41,10 @@ export class ExecutionModule {
 
   constructor(ib: IBApi) {
     this.ib = ib;
+    // Keep orderIdBase current — IBKR re-fires nextValidId after reconnects
     this.ib.on(EventName.nextValidId, (orderId: number) => {
       this.orderIdBase = orderId;
+      this.nextOrderIdOffset = 0;   // reset offset — base is already past all known IDs
       logger.info('execution', `IBKR next valid order ID: ${orderId}`);
     });
     this.ib.on(EventName.orderStatus, this.onOrderStatus.bind(this));
@@ -298,20 +300,37 @@ export class ExecutionModule {
     });
   }
 
+  /** Ask IBKR for the next safe order ID — resolves within ~1 s. */
+  private getNextOrderId(): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('reqIds timed out')), 5_000);
+      this.ib.once(EventName.nextValidId, (id: number) => {
+        clearTimeout(timer);
+        this.orderIdBase = id;
+        this.nextOrderIdOffset = 0;
+        resolve(id);
+      });
+      this.ib.reqIds(-1);
+    });
+  }
+
   async submitBracketOrder(
     sizing: PositionSizing,
     catalyst: CatalystScore
   ): Promise<Position | null> {
     const { symbol, shares, entryPrice, stopLoss, takeProfits } = sizing;
 
-    if (this.orderIdBase === null) {
-      logger.error('execution', 'No valid order ID from TWS yet — cannot submit order.');
+    // Always request a fresh ID from IBKR — prevents error 103 (duplicate order ID)
+    const parentId = await this.getNextOrderId().catch((err) => {
+      logger.error('execution', `Failed to get order ID: ${err}`);
       return null;
-    }
+    });
+    if (parentId === null) return null;
 
-    const parentId = this.orderIdBase + this.nextOrderIdOffset++;
-    const slId     = this.orderIdBase + this.nextOrderIdOffset++;
-    const tpId     = this.orderIdBase + this.nextOrderIdOffset++;
+    const slId = parentId + 1;
+    const tpId = parentId + 2;
+    // Advance offset so non-bracket orders don't collide until next reqIds
+    this.nextOrderIdOffset = 3;
 
     const contract: Contract = {
       symbol,
@@ -422,7 +441,8 @@ export class ExecutionModule {
     }
 
     if (this.orderIdBase === null) return false;
-    const mktOrderId = this.orderIdBase + this.nextOrderIdOffset++;
+    const mktOrderId = this.orderIdBase + this.nextOrderIdOffset;
+    this.nextOrderIdOffset++;
 
     const contract: Contract = {
       symbol,
