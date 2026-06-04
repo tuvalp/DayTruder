@@ -233,31 +233,41 @@ export class AlphaAgent extends EventEmitter {
       );
       this.emit('trade', position);
 
-      // When entry fills → mark positioned
+      // Timers — declared up-front so the fill callback can clear them
+      let chaseTimer: NodeJS.Timeout;
+      let cancelTimer: NodeJS.Timeout;
+
+      // Single onEntryFilled registration — clears both timers, marks positioned
       this.execution.onEntryFilled = (symbol, fillPrice) => {
+        if (symbol !== alert.symbol) return;
+        clearTimeout(chaseTimer);
+        clearTimeout(cancelTimer);
         logger.trade('system', `✅ POSITION OPEN: ${symbol} filled @ $${fillPrice.toFixed(2)}`);
         this.scanner.setStrategy(symbol, 'positioned');
         this.emitPositions();
         this.setState('monitoring');
       };
 
-      // Cancel unfilled entry after 60 s — re-enter pipeline via alert re-trigger
-      const cancelTimer = setTimeout(async () => {
+      // 30 s: chase unfilled entry — bump limit price 1.5% toward market
+      chaseTimer = setTimeout(() => {
         const stillPending = this.execution.getOpenPositions()
           .find((p) => p.symbol === alert.symbol && p.status === 'pending');
         if (!stillPending) return;
-        logger.warn('execution', `${alert.symbol} entry not filled after 60 s — cancelling order`);
-        await this.execution.cancelPendingEntry(alert.symbol);
+        const newLimit = parseFloat((sizing.entryPrice * 1.015).toFixed(2));
+        logger.warn('execution', `${alert.symbol} entry not filled after 30 s — chasing @ $${newLimit}`);
+        this.execution.chaseEntryOrder(alert.symbol, newLimit);
+      }, 30_000);
+
+      // 60 s: give up — cancel the whole bracket and reset
+      cancelTimer = setTimeout(() => {
+        const stillPending = this.execution.getOpenPositions()
+          .find((p) => p.symbol === alert.symbol && p.status === 'pending');
+        if (!stillPending) return;
+        logger.warn('execution', `${alert.symbol} entry not filled after 60 s — cancelling`);
+        this.execution.cancelPendingEntry(alert.symbol);
         this.scanner.setStrategy(alert.symbol, 'watching');
         this.setState(this.execution.getOpenPositions().filter((p) => p.status === 'open').length > 0 ? 'monitoring' : 'scanning');
       }, 60_000);
-
-      // Clear timer if filled before timeout
-      const origFilled = this.execution.onEntryFilled;
-      this.execution.onEntryFilled = (symbol, fillPrice) => {
-        if (symbol === alert.symbol) clearTimeout(cancelTimer);
-        origFilled(symbol, fillPrice);
-      };
     }
 
     this.setState(this.execution.getOpenPositions().length > 0 ? 'monitoring' : 'scanning');
@@ -310,10 +320,12 @@ export class AlphaAgent extends EventEmitter {
    *
    * For each open position:
    *   1. Track session high
-   *   2. TP1 hit → sell 50%, move stop to breakeven
-   *   3. TP2 hit → sell 25% more, trail stop above TP1
-   *   4. Reversal → if up > 10% then pulls back 6%+ from session high, exit to lock gains
-   *   5. Trailing stop → once up 20%, trail by 8% below session high
+   *   2. Early breakeven: once up half a stop-loss %, move stop to entry → zero risk
+   *   3. TP1 hit → sell 50%, stop → breakeven (if not already)
+   *   4. TP2 hit → sell 25% more, stop → TP1 (locked profit floor)
+   *   5. Post-TP1 trailing: trail 5% below session high once any TP hit
+   *   6. Trailing stop: once up 20%+, trail 8% below session high
+   *   7. Reversal exit: up > half-stop% and pulls back 6%+ from high without TP
    */
   private manageOpenPositions() {
     const s = settingsStore.get();
@@ -339,28 +351,47 @@ export class AlphaAgent extends EventEmitter {
         ? ((price - pos.sessionHigh) / pos.sessionHigh) * 100
         : 0;
 
-      // ── TP1: sell half, move stop to breakeven ──────────────────────────────
+      // ── Early breakeven: half a stop above entry → stop to entry price ───────
+      // Eliminates downside risk as soon as there's a small cushion
+      const breakEvenTriggerPct = s.stopLossPct / 2;
+      if (!pos.tp1Hit && pctFromEntry >= breakEvenTriggerPct && pos.stopLoss < pos.avgPrice) {
+        this.execution.adjustStop(pos.symbol, pos.avgPrice);
+        logger.trade('system', `🔒 ${pos.symbol} stop → breakeven $${pos.avgPrice.toFixed(2)} (up ${pctFromEntry.toFixed(1)}%)`);
+        changed = true;
+      }
+
+      // ── TP1: sell half, tighten stop to breakeven ────────────────────────────
       if (!pos.tp1Hit && tp1 && price >= tp1) {
         pos.tp1Hit = true;
         const half = Math.max(1, Math.floor(pos.shares / 2));
         this.execution.partialSell(pos.symbol, half, `TP1 hit @ $${price.toFixed(2)} (+${pctFromEntry.toFixed(1)}%)`);
-        this.execution.adjustStop(pos.symbol, pos.avgPrice);  // stop → breakeven
+        this.execution.adjustStop(pos.symbol, pos.avgPrice);
         logger.trade('system', `📈 ${pos.symbol} TP1 — sold ${half} sh, stop → breakeven $${pos.avgPrice.toFixed(2)}`);
         changed = true;
       }
 
-      // ── TP2: sell half of remainder, trail stop above TP1 ──────────────────
+      // ── TP2: sell half of remainder, stop → TP1 (locked profit) ─────────────
       else if (pos.tp1Hit && !pos.tp2Hit && tp2 && price >= tp2) {
         pos.tp2Hit = true;
         const quarter = Math.max(1, Math.floor(pos.shares / 2));
         this.execution.partialSell(pos.symbol, quarter, `TP2 hit @ $${price.toFixed(2)} (+${pctFromEntry.toFixed(1)}%)`);
-        if (tp1) this.execution.adjustStop(pos.symbol, tp1);  // stop → TP1 level
+        if (tp1) this.execution.adjustStop(pos.symbol, tp1);
         logger.trade('system', `🚀 ${pos.symbol} TP2 — sold ${quarter} sh, stop → TP1 $${tp1?.toFixed(2)}`);
         changed = true;
       }
 
-      // ── Trailing stop: once up 20%+, trail 8% below session high ───────────
-      else if (pctFromEntry > 20 && pos.sessionHigh) {
+      // ── Post-TP1 tight trail: once any profit locked, trail 5% from high ─────
+      else if (pos.tp1Hit && pos.sessionHigh) {
+        const tightTrail = parseFloat((pos.sessionHigh * 0.95).toFixed(2));
+        if (tightTrail > pos.stopLoss) {
+          this.execution.adjustStop(pos.symbol, tightTrail);
+          logger.info('system', `↗ ${pos.symbol} tight trail → $${tightTrail.toFixed(2)} (high $${pos.sessionHigh.toFixed(2)})`);
+          changed = true;
+        }
+      }
+
+      // ── Wide trailing stop: once up 20%+, trail 8% below session high ────────
+      else if (!pos.tp1Hit && pctFromEntry > 20 && pos.sessionHigh) {
         const trailStop = parseFloat((pos.sessionHigh * 0.92).toFixed(2));
         if (trailStop > pos.stopLoss) {
           this.execution.adjustStop(pos.symbol, trailStop);
@@ -369,15 +400,14 @@ export class AlphaAgent extends EventEmitter {
         }
       }
 
-      // ── Reversal exit: profitable position pulls back hard from session high ─
-      // Only fires if we're up enough to still profit after commissions
+      // ── Reversal exit: profitable position pulls back hard without any TP ─────
       if (
         pos.sessionHigh &&
-        pctFromEntry > (s.stopLossPct / 2) &&  // already more than half a stop above entry
-        pctFromHigh < -6 &&                     // pulled back 6%+ from high
-        !pos.tp1Hit                              // haven't taken any profit yet
+        pctFromEntry > breakEvenTriggerPct &&
+        pctFromHigh < -6 &&
+        !pos.tp1Hit
       ) {
-        logger.trade('system', `⚠️  ${pos.symbol} reversal detected — up ${pctFromEntry.toFixed(1)}% but -${Math.abs(pctFromHigh).toFixed(1)}% from high. Exiting to lock profit.`);
+        logger.trade('system', `⚠️  ${pos.symbol} reversal — up ${pctFromEntry.toFixed(1)}% but -${Math.abs(pctFromHigh).toFixed(1)}% from high. Exiting.`);
         this.execution.closePosition(pos.symbol);
         this.scanner.setStrategy(pos.symbol, 'watching');
         changed = true;

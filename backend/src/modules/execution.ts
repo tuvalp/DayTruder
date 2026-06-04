@@ -80,9 +80,14 @@ export class ExecutionModule {
       if (!symbol) return;
       const shares = Math.abs(pos as number);
       const existing = this.positions.get(symbol);
-      if (existing && existing.status === 'open') {
+      if (existing && (existing.status === 'open' || existing.status === 'pending')) {
         existing.shares   = shares;
         existing.avgPrice = avgCost as number;
+        // Position stream confirms shares received — promote pending → open
+        if (existing.status === 'pending' && shares > 0) {
+          existing.status = 'open';
+          logger.success('execution', `${symbol} position confirmed open via position stream (${shares} sh @ $${(avgCost as number).toFixed(2)})`);
+        }
         if (shares === 0) { existing.status = 'closed'; this.cancelPositionMktData(symbol); }
       } else if (shares > 0 && !existing) {
         // Position opened outside agent (manual TWS trade)
@@ -196,7 +201,7 @@ export class ExecutionModule {
         this.ib.off(EventName.position, posHandler);
         this.ib.off(EventName.positionEnd, endHandler);
 
-        // Mark any local positions no longer in IBKR as closed
+        // Mark any local positions no longer in IBKR as closed — skip pending (not yet filled)
         for (const [sym, p] of this.positions.entries()) {
           if (p.status === 'open' && !seen.has(sym)) {
             p.status = 'closed';
@@ -536,6 +541,32 @@ export class ExecutionModule {
     }
   }
 
+  /** Re-price a pending entry limit order to chase the market (same orderId = modify). */
+  chaseEntryOrder(symbol: string, newLimitPrice: number): void {
+    const pos = this.positions.get(symbol);
+    if (!pos || pos.status !== 'pending') return;
+    const entryOrder = pos.orders.find((o) => o.side === 'buy' && o.type === 'limit');
+    if (!entryOrder?.brokerOrderId) return;
+    const orderId = Number(entryOrder.brokerOrderId);
+    const contract: Contract = { symbol, secType: SecType.STK, currency: 'USD', exchange: 'SMART' };
+    try {
+      this.ib.placeOrder(orderId, contract, {
+        orderId,
+        action: OrderAction.BUY,
+        orderType: IBOrderType.LMT,
+        totalQuantity: pos.shares,
+        lmtPrice: newLimitPrice,
+        tif: TimeInForce.DAY,
+        transmit: true,
+        account: this.account,
+      });
+      entryOrder.limitPrice = newLimitPrice;
+      logger.trade('execution', `${symbol}: entry limit chased to $${newLimitPrice.toFixed(2)}`);
+    } catch (err) {
+      logger.error('execution', `chaseEntryOrder failed for ${symbol}: ${err}`);
+    }
+  }
+
   /**
    * Called when IBKR fires error 202 (order cancelled) for a given orderId.
    * If the orderId belongs to a pending entry, cleans up and returns the symbol.
@@ -658,28 +689,30 @@ export class ExecutionModule {
     _remaining: number,
     avgFillPrice: number
   ) {
-    // Find the position that owns this order and update fill data
+    // Find the position that owns this order by iterating all positions
     for (const pos of this.positions.values()) {
       const order = pos.orders.find((o) => o.brokerOrderId === String(orderId));
       if (!order) continue;
+
       order.status = this.mapStatus(status);
       order.filledQty = filled;
       order.avgFillPrice = avgFillPrice;
+
       if (status === 'Filled') {
         order.filledAt = Date.now();
-        pos.avgPrice = avgFillPrice || pos.avgPrice;
-        logger.success('execution', `Order ${orderId} FILLED: ${filled} @ $${avgFillPrice}`);
+        if (avgFillPrice > 0) pos.avgPrice = avgFillPrice;
+        logger.success('execution', `Order ${orderId} FILLED: ${filled} @ $${avgFillPrice} (${pos.symbol})`);
 
         // Entry (BUY) fill → promote position from pending → open
-        const entrySymbol = this.entryOrderToSymbol.get(orderId);
-        if (entrySymbol && pos.symbol === entrySymbol && pos.status === 'pending') {
+        if (this.entryOrderToSymbol.has(orderId) && pos.status === 'pending') {
           pos.status = 'open';
           this.entryOrderToSymbol.delete(orderId);
-          logger.success('execution', `${entrySymbol} position OPENED — entry filled @ $${avgFillPrice}`);
-          this.onEntryFilled?.(entrySymbol, avgFillPrice);
+          logger.success('execution', `${pos.symbol} position OPENED — entry filled @ $${avgFillPrice}`);
+          this.onEntryFilled?.(pos.symbol, avgFillPrice);
         }
       }
-      break;
+
+      return;  // each orderId belongs to exactly one position — stop searching
     }
   }
 
