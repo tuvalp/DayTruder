@@ -43,6 +43,8 @@ Never score a genuine high-RVOL breakout below 30 just because there is no news.
 export class ResearchAgent {
   private cache = new Map<string, { score: CatalystScore; expiry: number }>();
   private readonly cacheTtl = 10 * 60_000;
+  // Deduplicates concurrent calls for the same symbol — all callers await the same Promise
+  private inFlight = new Map<string, Promise<CatalystScore>>();
 
   async analyze(alert: ScannerAlert, newsHeadlines: string[] = []): Promise<CatalystScore> {
     const cacheKey = `${alert.symbol}:${Math.floor(alert.timestamp / 60_000)}`;
@@ -52,11 +54,22 @@ export class ResearchAgent {
       return cached.score;
     }
 
-    logger.info(
-      'research',
-      `Analyzing catalyst for ${alert.symbol} @ $${alert.price.toFixed(2)}…`
-    );
+    // If a call for this key is already running, share it instead of firing a new one
+    const existing = this.inFlight.get(cacheKey);
+    if (existing) {
+      logger.info('research', `${alert.symbol} — joining in-flight analysis`);
+      return existing;
+    }
 
+    const promise = this._doAnalyze(alert, newsHeadlines, cacheKey).finally(() => {
+      this.inFlight.delete(cacheKey);
+    });
+    this.inFlight.set(cacheKey, promise);
+    return promise;
+  }
+
+  private async _doAnalyze(alert: ScannerAlert, newsHeadlines: string[], cacheKey: string): Promise<CatalystScore> {
+    logger.info('research', `Analyzing catalyst for ${alert.symbol} @ $${alert.price.toFixed(2)}…`);
     const userContent = this.buildPrompt(alert, newsHeadlines);
 
     const message = await client.messages.create({

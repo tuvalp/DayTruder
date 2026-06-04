@@ -28,6 +28,8 @@ export class AlphaAgent extends EventEmitter {
   private lastLiquidityFetch: number | null = null;
   private state: AgentState = 'idle';
   private syncInterval: NodeJS.Timeout | null = null;
+  // Symbols currently running through the pipeline — prevents duplicate concurrent processing
+  private inPipeline = new Set<string>();
   private performanceHistory: PerformanceDataPoint[] = [];
   private startingLiquidity = 0;
   private cachedLiquidity = 0;
@@ -60,15 +62,18 @@ export class AlphaAgent extends EventEmitter {
 
     this.ib.on(EventName.error, (_err, code, reqId) => {
       // Informational / transient codes — suppress
-      if ([162, 300, 365, 2104, 2106, 2158, 2119, 10089, 10167, 10168].includes(code)) return;
+      if ([162, 300, 365, 2104, 2106, 2158, 2119, 10089, 10147, 10167, 10168,
+           104,  // can't modify a filled order — harmless after partial sells
+      ].includes(code)) return;
       // 200 = no security definition — symbol is unresolvable (warrant, OTC, etc.)
       if ((code as unknown as number) === 200) {
         const sym = this.scanner.dropByReqId(reqId);
         if (sym) logger.warn('scanner', `${sym} removed — IBKR cannot resolve contract (error 200)`);
         return;
       }
-      // 202 = order cancelled — if it's a pending entry, clean up the position
-      if ((code as unknown as number) === 202) {
+      // 201 = order rejected by IBKR (e.g. insufficient margin, invalid price)
+      // 202 = order cancelled — both mean the entry failed; clean up pending position
+      if ((code as unknown as number) === 201 || (code as unknown as number) === 202) {
         const sym = this.execution.handleOrderCancelled(reqId as number);
         if (sym) {
           logger.warn('execution', `${sym} entry order cancelled by IBKR (202) — resetting to watching`);
@@ -170,6 +175,21 @@ export class AlphaAgent extends EventEmitter {
     if (this.state === 'paused') return;
     if (this.risk.isCircuitBreakerActive) return;
 
+    // ── Deduplicate: skip if this symbol is already in the pipeline ──────────
+    if (this.inPipeline.has(alert.symbol)) return;
+    // Also skip if we already have a pending/open position for this symbol
+    const existingPos = this.execution.getOpenPositions().find((p) => p.symbol === alert.symbol);
+    if (existingPos) return;
+    this.inPipeline.add(alert.symbol);
+
+    try {
+      await this._handleAlert(alert);
+    } finally {
+      this.inPipeline.delete(alert.symbol);
+    }
+  }
+
+  private async _handleAlert(alert: ScannerAlert) {
     // ── Market hours gate ─────────────────────────────────────────────────────
     if (!isMarketOpen()) {
       logger.info('system', `${alert.symbol} alert ignored — market is ${getMarketStatus()}`);
