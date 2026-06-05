@@ -6,7 +6,7 @@ import { config } from './config';
 import { logger } from './utils/logger';
 import { AlphaAgent } from './modules/agent';
 import { settingsStore } from './modules/settings';
-import type { AgentLogEntry, PortfolioSnapshot, PerformanceDataPoint } from './types';
+import type { AgentLogEntry, PortfolioSnapshot, PerformanceDataPoint, TradeExecution, AccountPnL } from './types';
 
 const app = express();
 app.use(cors({ origin: '*' }));
@@ -22,15 +22,20 @@ const agent = new AlphaAgent();
 logger.setEmitter((entry: AgentLogEntry) => io.emit('log', entry));
 agent.on('portfolio', (s: PortfolioSnapshot) => io.emit('portfolio', s));
 agent.on('performance', (h: PerformanceDataPoint[]) => io.emit('performance', h));
-agent.on('state',        (s: string) => io.emit('agentState', s));
-agent.on('marketStatus', (s: string) => io.emit('marketStatus', s));
+agent.on('state', (s: string) => io.emit('agentState', s));
 agent.on('trade', (p: unknown) => io.emit('trade', p));
-let lastWatchlist: unknown[] = [];
-let lastPositions: unknown[] = [];
-let lastOrders: unknown[] = [];
-agent.on('watchlist',  (entries: unknown[]) => { lastWatchlist  = entries; io.emit('watchlist',  entries); });
-agent.on('positions',  (entries: unknown[]) => { lastPositions  = entries; io.emit('positions',  entries); });
-agent.on('orders',     (entries: unknown[]) => { lastOrders     = entries; io.emit('orders',     entries); });
+let lastWatchlist: unknown[]       = [];
+let lastPositions: unknown[]       = [];
+let lastOrders:    unknown[]       = [];
+let lastExecutions: TradeExecution[] = [];
+let lastPnL: AccountPnL | null     = null;
+let lastMarketStatus = 'unknown';
+agent.on('watchlist',   (entries: unknown[])        => { lastWatchlist  = entries;   io.emit('watchlist',   entries); });
+agent.on('positions',   (entries: unknown[])        => { lastPositions  = entries;   io.emit('positions',   entries); });
+agent.on('orders',      (entries: unknown[])        => { lastOrders     = entries;   io.emit('orders',      entries); });
+agent.on('executions',  (entries: TradeExecution[]) => { lastExecutions = entries;   io.emit('executions',  entries); });
+agent.on('pnl',         (pnl: AccountPnL)           => { lastPnL        = pnl;       io.emit('pnl',         pnl);     });
+agent.on('marketStatus',(s: string)                 => { lastMarketStatus = s;       io.emit('marketStatus', s);      });
 
 // Broadcast settings changes to all connected dashboards
 settingsStore.on('change', (s) => io.emit('settings', s));
@@ -67,12 +72,15 @@ app.post('/agent/manual-buy', async (req, res) => {
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
   logger.info('system', `Dashboard connected: ${socket.id}`);
-  socket.emit('agentState', agent.getState());
-  socket.emit('settings', settingsStore.get());
-  socket.emit('performance', agent.getPerformanceHistory());
-  if (lastWatchlist.length  > 0) socket.emit('watchlist',  lastWatchlist);
-  if (lastPositions.length  > 0) socket.emit('positions',  lastPositions);
-  if (lastOrders.length     > 0) socket.emit('orders',     lastOrders);
+  socket.emit('agentState',    agent.getState());
+  socket.emit('settings',      settingsStore.get());
+  socket.emit('performance',   agent.getPerformanceHistory());
+  socket.emit('marketStatus',  lastMarketStatus);
+  if (lastWatchlist.length   > 0) socket.emit('watchlist',   lastWatchlist);
+  if (lastPositions.length   > 0) socket.emit('positions',   lastPositions);
+  if (lastOrders.length      > 0) socket.emit('orders',      lastOrders);
+  if (lastExecutions.length  > 0) socket.emit('executions',  lastExecutions);
+  if (lastPnL)                    socket.emit('pnl',         lastPnL);
 
   socket.on('startAgent', () => agent.start().catch((e) => logger.error('system', String(e))));
   socket.on('pauseAgent', () => agent.pause());

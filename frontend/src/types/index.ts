@@ -53,6 +53,27 @@ export interface Position {
   catalystScore: CatalystScore;
 }
 
+export interface TradeExecution {
+  id: string;
+  execId: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  shares: number;
+  price: number;
+  ibTime: string;
+  timestamp: number;
+  orderId: number;
+  realizedPnl: number;
+  commission: number;
+}
+
+export interface AccountPnL {
+  dailyPnL: number;
+  unrealizedPnL: number;
+  realizedPnL: number;
+  updatedAt: number;
+}
+
 export interface PortfolioSnapshot {
   netLiquidity: number;
   availableCash: number;
@@ -62,6 +83,7 @@ export interface PortfolioSnapshot {
   openPositions: Position[];
   activeRiskMultiplier: number;
   snapshotAt: number;
+  ibkrPnL?: AccountPnL;
 }
 
 export interface AgentLogEntry {

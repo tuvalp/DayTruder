@@ -11,7 +11,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import { logger } from '../utils/logger';
-import type { Order, Position, PositionSizing, CatalystScore, OrderStatus } from '../types';
+import type { Order, Position, PositionSizing, CatalystScore, OrderStatus, TradeExecution, AccountPnL } from '../types';
 
 /**
  * Order Execution Module — IBKR
@@ -39,16 +39,116 @@ export class ExecutionModule {
   private entryOrderToSymbol = new Map<number, string>();
   onEntryFilled?: (symbol: string, avgFillPrice: number) => void;
 
+  // Trade history (executions from IBKR)
+  private executions: TradeExecution[] = [];
+  private accountPnL: AccountPnL | null = null;
+  onExecutionsUpdate?: () => void;
+  onPnLUpdate?: (pnl: AccountPnL) => void;
+
   constructor(ib: IBApi) {
     this.ib = ib;
     // Keep orderIdBase current — IBKR re-fires nextValidId after reconnects
     this.ib.on(EventName.nextValidId, (orderId: number) => {
       this.orderIdBase = orderId;
-      this.nextOrderIdOffset = 0;   // reset offset — base is already past all known IDs
+      this.nextOrderIdOffset = 0;
       logger.info('execution', `IBKR next valid order ID: ${orderId}`);
     });
     this.ib.on(EventName.orderStatus, this.onOrderStatus.bind(this));
+
+    // ── Execution tracking — fires on every fill (buy and sell) ──────────────
+    (this.ib as unknown as { on: (e: string, h: (...a: unknown[]) => void) => void })
+      .on('execDetails', (_reqId: unknown, contract: unknown, exec: unknown) => {
+        const e = exec as {
+          execId: string; time: string; side: string;
+          shares: number; price: number; orderId: number;
+        };
+        const c = contract as { symbol: string };
+        if (this.executions.find((x) => x.execId === e.execId)) return;
+        this.executions.push({
+          id: uuidv4(),
+          execId: e.execId,
+          symbol: c.symbol,
+          side: e.side === 'BOT' ? 'buy' : 'sell',
+          shares: Number(e.shares),
+          price: Number(e.price),
+          ibTime: e.time,
+          timestamp: this.parseIBKRTime(e.time),
+          orderId: Number(e.orderId),
+          realizedPnl: 0,
+          commission: 0,
+        });
+        this.onExecutionsUpdate?.();
+      });
+
+    // commissionReport pairs with execDetails by execId — provides P&L + commission
+    (this.ib as unknown as { on: (e: string, h: (...a: unknown[]) => void) => void })
+      .on('commissionReport', (report: unknown) => {
+        const r = report as { execId: string; commission: number; realizedPNL: number };
+        const exec = this.executions.find((x) => x.execId === r.execId);
+        if (exec) {
+          exec.commission = Number(r.commission) || 0;
+          // IBKR sends 1.7976931348623157e+308 for unrealized (buy legs) — treat as 0
+          exec.realizedPnl = Number.isFinite(r.realizedPNL) ? Number(r.realizedPNL) : 0;
+          this.onExecutionsUpdate?.();
+        }
+      });
   }
+
+  /** Parse IBKR time string "20241205 14:32:45 US/Eastern" to epoch ms. */
+  private parseIBKRTime(ibTime: string): number {
+    const parts = ibTime.split(' ');
+    const d = parts[0] ?? '';
+    const t = parts[1] ?? '00:00:00';
+    if (d.length < 8) return Date.now();
+    const iso = `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}T${t}`;
+    const ms = new Date(iso).getTime();
+    return isNaN(ms) ? Date.now() : ms;
+  }
+
+  /** Fetch today's executions from TWS on startup. */
+  syncExecutions(): Promise<void> {
+    return new Promise((resolve) => {
+      const reqId = 7001;
+      const endHandler = () => {
+        (this.ib as unknown as { off: (e: string, h: unknown) => void }).off('execDetailsEnd', endHandler);
+        logger.success('execution', `Execution sync complete — ${this.executions.length} trade(s) today`);
+        resolve();
+      };
+      (this.ib as unknown as { on: (e: string, h: unknown) => void; off: (e: string, h: unknown) => void;
+        reqExecutions: (id: number, filter: unknown) => void })
+        .on('execDetailsEnd', endHandler);
+      (this.ib as unknown as { reqExecutions: (id: number, filter: unknown) => void })
+        .reqExecutions(reqId, {});
+      setTimeout(() => {
+        (this.ib as unknown as { off: (e: string, h: unknown) => void }).off('execDetailsEnd', endHandler);
+        resolve();
+      }, 10_000);
+    });
+  }
+
+  /** Start streaming live P&L from IBKR (reqPnL). Uses the cached account string. */
+  startPnLStream() {
+    if (!this.account) return;
+    const reqId = 7000;
+    (this.ib as unknown as { on: (e: string, h: (...a: unknown[]) => void) => void })
+      .on('pnl', (rId: unknown, dailyPnL: unknown, unrealizedPnL: unknown, realizedPnL: unknown) => {
+        if ((rId as number) !== reqId) return;
+        const pnl: AccountPnL = {
+          dailyPnL:      Number.isFinite(dailyPnL as number)      ? (dailyPnL as number)      : 0,
+          unrealizedPnL: Number.isFinite(unrealizedPnL as number) ? (unrealizedPnL as number) : 0,
+          realizedPnL:   Number.isFinite(realizedPnL as number)   ? (realizedPnL as number)   : 0,
+          updatedAt: Date.now(),
+        };
+        this.accountPnL = pnl;
+        this.onPnLUpdate?.(pnl);
+      });
+    (this.ib as unknown as { reqPnL: (id: number, account: string, model: string) => void })
+      .reqPnL(reqId, this.account, '');
+    logger.info('execution', `P&L stream started for account ${this.account}`);
+  }
+
+  getExecutions(): TradeExecution[] { return [...this.executions]; }
+  getAccountPnL(): AccountPnL | null { return this.accountPnL; }
 
   /**
    * Subscribe live reqMktData + ongoing reqPositions for all open positions.

@@ -111,6 +111,29 @@ export interface Position {
   tp2OrderId?: number;
 }
 
+/** One IBKR fill — from reqExecutions / live execDetails events. */
+export interface TradeExecution {
+  id: string;
+  execId: string;
+  symbol: string;
+  side: TradeSide;
+  shares: number;
+  price: number;
+  ibTime: string;       // raw IBKR time string
+  timestamp: number;    // parsed ms epoch
+  orderId: number;
+  realizedPnl: number;  // from paired commissionReport (0 for buys)
+  commission: number;
+}
+
+/** Live account-level P&L from IBKR reqPnL stream. */
+export interface AccountPnL {
+  dailyPnL: number;
+  unrealizedPnL: number;
+  realizedPnL: number;
+  updatedAt: number;
+}
+
 export interface PortfolioSnapshot {
   netLiquidity: number;
   availableCash: number;
@@ -120,6 +143,7 @@ export interface PortfolioSnapshot {
   openPositions: Position[];
   activeRiskMultiplier: number;
   snapshotAt: number;
+  ibkrPnL?: AccountPnL;
 }
 
 export interface AgentLogEntry {

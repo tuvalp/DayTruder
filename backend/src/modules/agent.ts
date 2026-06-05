@@ -9,7 +9,7 @@ import { ExecutionModule } from './execution';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { settingsStore } from './settings';
-import type { ScannerAlert, AgentState, PortfolioSnapshot, PerformanceDataPoint } from '../types';
+import type { ScannerAlert, AgentState, PortfolioSnapshot, PerformanceDataPoint, TradeExecution } from '../types';
 
 /**
  * AlphaAgent — Autonomous Trading Orchestrator
@@ -104,6 +104,12 @@ export class AlphaAgent extends EventEmitter {
     // Sync open positions and orders from IBKR (handles restarts gracefully)
     await this.execution.syncPositionsFromIBKR();
     await this.execution.syncOpenOrdersFromIBKR();
+
+    // Load today's fill history + start live P&L stream
+    await this.execution.syncExecutions();
+    this.execution.startPnLStream();
+    this.execution.onExecutionsUpdate = () => this.emit('executions', this.execution.getExecutions());
+    this.execution.onPnLUpdate = (pnl) => this.emit('pnl', pnl);
 
     // Subscribe live price ticks for every open position; re-emit on each update
     this.execution.startLiveTracking(() => this.emitPositions());
@@ -316,18 +322,28 @@ export class AlphaAgent extends EventEmitter {
     this.risk.updateLiquidity(liquidity);
     this.risk.updateAvailableCash(this.execution.getAvailableCash());
 
+    const ibPnL = this.execution.getAccountPnL();
+    // Prefer IBKR's own P&L numbers when available (more accurate than calculated)
+    const realizedPnl  = ibPnL?.realizedPnL   ?? 0;
+    const unrealPnl    = ibPnL?.unrealizedPnL  ?? dailyUnrealized;
+    const dailyPnl     = ibPnL?.dailyPnL       ?? (realizedPnl + unrealPnl);
+    const dailyPnlPct  = this.startingLiquidity > 0
+      ? (dailyPnl / this.startingLiquidity) * 100
+      : 0;
+
     const snapshot: PortfolioSnapshot = {
       netLiquidity: liquidity,
       availableCash: this.execution.getAvailableCash(),
-      dailyRealizedPnl: 0,
-      dailyUnrealizedPnl: dailyUnrealized,
-      dailyPnlPct: ((liquidity - this.startingLiquidity) / this.startingLiquidity) * 100,
+      dailyRealizedPnl: realizedPnl,
+      dailyUnrealizedPnl: unrealPnl,
+      dailyPnlPct,
       openPositions,
       activeRiskMultiplier: this.risk.activeRiskMultiplier,
       snapshotAt: Date.now(),
+      ibkrPnL: ibPnL ?? undefined,
     };
 
-    this.performanceHistory.push({ timestamp: Date.now(), equity: liquidity, pnl: snapshot.dailyPnlPct });
+    this.performanceHistory.push({ timestamp: Date.now(), equity: liquidity, pnl: dailyPnlPct });
     if (this.performanceHistory.length > 390) this.performanceHistory.shift();
 
     this.emit('portfolio', snapshot);
@@ -338,7 +354,10 @@ export class AlphaAgent extends EventEmitter {
   emitPositions() {
     this.emit('positions', this.execution.getOpenPositions());
     this.emit('orders', this.execution.getOpenOrders());
+    this.emit('executions', this.execution.getExecutions());
   }
+
+  getExecutions(): TradeExecution[] { return this.execution.getExecutions(); }
 
   /**
    * Active position management — runs every 5 s.
