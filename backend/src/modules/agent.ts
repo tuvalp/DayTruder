@@ -43,8 +43,8 @@ export class AlphaAgent extends EventEmitter {
       clientId: config.IBKR_CLIENT_ID,
     });
 
-    this.scanner  = new MarketScanner(this.ib);
     this.screener = new PolygonScreener();
+    this.scanner  = new MarketScanner(this.ib, this.screener);  // scanner owns the screener stream
     this.research = new ResearchAgent();
     this.execution = new ExecutionModule(this.ib);
     this.risk = new RiskEngine(0);
@@ -110,12 +110,8 @@ export class AlphaAgent extends EventEmitter {
 
     this.scanner.on('alert', (alert: ScannerAlert) => this.handleAlert(alert));
     this.scanner.on('watchlist', (entries) => this.emit('watchlist', entries));
+    // scanner.start() also starts the screener and wires the symbol stream internally
     this.scanner.start();
-
-    // Polygon screener drives the entire watchlist — polls every 30 s for today's movers
-    this.screener.start((results) => {
-      this.scanner.ingestSymbols(results.map((r) => ({ symbol: r.symbol, float: r.float, price: r.price })));
-    });
 
     const status = getMarketStatus();
     const openMsg = status === 'open'
@@ -204,6 +200,16 @@ export class AlphaAgent extends EventEmitter {
     }
     // Position sizing and cash-cap happen inside risk.size() — no pre-rejection needed
 
+    // ── Adaptive strategy: thresholds scale with available cash ─────────────
+    const adaptive = this.adaptiveStrategy();
+    const openCount = this.execution.getOpenPositions().length;
+
+    // Block new entries if at the adaptive position limit
+    if (openCount >= adaptive.maxPositions) {
+      logger.info('system', `${alert.symbol} skipped — ${openCount}/${adaptive.maxPositions} positions open (${adaptive.logReason})`);
+      return;
+    }
+
     this.scanner.setStrategy(alert.symbol, 'alert');
 
     // ── Profit margin pre-check (no Claude API call wasted) ──────────────────
@@ -226,9 +232,8 @@ export class AlphaAgent extends EventEmitter {
       this.setState('scanning'); return;
     }
 
-    const { minCatalystScore } = settingsStore.get();
-    if (catalyst.score < minCatalystScore) {
-      logger.warn('system', `${alert.symbol} skipped — catalyst score ${catalyst.score}/100 below threshold (${minCatalystScore}).`);
+    if (catalyst.score < adaptive.minScore) {
+      logger.warn('system', `${alert.symbol} skipped — score ${catalyst.score}/100 below adaptive threshold (${adaptive.minScore}). ${adaptive.logReason}`);
       this.scanner.setStrategy(alert.symbol, 'rejected');
       this.setState('scanning');
       return;
@@ -236,8 +241,8 @@ export class AlphaAgent extends EventEmitter {
 
     this.setState('executing');
     this.scanner.setStrategy(alert.symbol, 'sizing');
-    const openCount = this.execution.getOpenPositions().length;
-    const sizing = this.risk.size(alert.symbol, alert.price, catalyst, openCount, alert);
+    // Pass adaptive position size % to risk engine for this trade
+    const sizing = this.risk.size(alert.symbol, alert.price, catalyst, openCount, alert, adaptive.positionSizePct);
     if (!sizing) {
       this.scanner.setStrategy(alert.symbol, 'rejected');
       this.setState('monitoring'); return;
@@ -435,6 +440,61 @@ export class AlphaAgent extends EventEmitter {
     }
 
     if (changed) this.emitPositions();
+  }
+
+  /**
+   * Adaptive strategy — adjusts thresholds based on available cash.
+   *
+   * With very little cash: concentrate into ONE high-conviction trade,
+   * demand higher catalyst score, deploy most of the cash in one go.
+   *
+   * With more cash: spread across multiple positions to reduce risk,
+   * accept lower catalyst scores since losing one trade doesn't hurt as much.
+   *
+   * Returns effective overrides that take precedence over settings-store values.
+   */
+  private adaptiveStrategy(): { maxPositions: number; minScore: number; positionSizePct: number; logReason: string } {
+    const cash = this.execution.getAvailableCash();
+    const s = settingsStore.get();
+
+    if (cash < 150) {
+      return {
+        maxPositions: 1,
+        minScore: Math.max(s.minCatalystScore, 40),
+        positionSizePct: 90,
+        logReason: `low cash $${cash.toFixed(0)} — 1 high-conviction trade only, score ≥ 40`,
+      };
+    }
+    if (cash < 400) {
+      return {
+        maxPositions: 1,
+        minScore: Math.max(s.minCatalystScore, 35),
+        positionSizePct: 80,
+        logReason: `limited cash $${cash.toFixed(0)} — 1 trade, score ≥ 35`,
+      };
+    }
+    if (cash < 1000) {
+      return {
+        maxPositions: Math.min(s.maxOpenPositions, 2),
+        minScore: Math.max(s.minCatalystScore, 30),
+        positionSizePct: 60,
+        logReason: `moderate cash $${cash.toFixed(0)} — up to 2 trades, score ≥ 30`,
+      };
+    }
+    if (cash < 3000) {
+      return {
+        maxPositions: Math.min(s.maxOpenPositions, 3),
+        minScore: s.minCatalystScore,
+        positionSizePct: 40,
+        logReason: `good cash $${cash.toFixed(0)} — up to 3 trades`,
+      };
+    }
+    return {
+      maxPositions: s.maxOpenPositions,
+      minScore: s.minCatalystScore,
+      positionSizePct: Math.min(s.maxPositionSizePct, 30),
+      logReason: `ample cash $${cash.toFixed(0)} — full diversification`,
+    };
   }
 
   private setState(state: AgentState) {

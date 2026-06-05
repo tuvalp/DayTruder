@@ -7,6 +7,7 @@ import {
 } from '@stoqey/ib';
 import { logger } from '../utils/logger';
 import { settingsStore } from './settings';
+import type { PolygonScreener, ScreenerResult } from './screener';
 import type { ScannerAlert, WatchlistEntry, SymbolStrategy } from '../types';
 
 interface TickState {
@@ -36,18 +37,20 @@ interface TickState {
  */
 export class MarketScanner extends EventEmitter {
   private ib: IBApi;
+  private screener: PolygonScreener;
   private tickState = new Map<string, TickState>();
   private symbolToReqId = new Map<string, number>();
   private reqIdToSymbol = new Map<number, string>();
   private alertCooldown = new Map<string, number>();
-  private symbolLastSeen = new Map<string, number>();   // ts of last Polygon mention
+  private symbolLastSeen = new Map<string, number>();
   private nextReqId = 100;
   private running = false;
   private watchlistThrottle: NodeJS.Timeout | null = null;
 
-  constructor(ib: IBApi) {
+  constructor(ib: IBApi, screener: PolygonScreener) {
     super();
     this.ib = ib;
+    this.screener = screener;
   }
 
   start() {
@@ -56,11 +59,20 @@ export class MarketScanner extends EventEmitter {
     // 4 = real-time if subscribed, delayed otherwise — suppresses error 10089
     this.ib.reqMarketDataType(4);
     this.attachTickHandlers();
-    logger.info('scanner', 'Scanner ready — waiting for first screener batch…');
+
+    // Wire screener stream directly into scanner — no agent callback needed
+    this.screener.on('symbols', (results: ScreenerResult[]) => {
+      this.ingestSymbols(results.map((r) => ({ symbol: r.symbol, float: r.float, price: r.price })));
+    });
+    this.screener.start();
+
+    logger.info('scanner', 'Scanner ready — wired to screener stream');
   }
 
   stop() {
     this.running = false;
+    this.screener.stop();
+    this.screener.removeAllListeners('symbols');
     for (const reqId of this.symbolToReqId.values()) {
       try { this.ib.cancelMktData(reqId); } catch { /* ignore */ }
     }

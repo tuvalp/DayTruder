@@ -1,3 +1,4 @@
+import EventEmitter from 'events';
 import axios from 'axios';
 import { logger } from '../utils/logger';
 import { settingsStore } from './settings';
@@ -14,19 +15,16 @@ export interface ScreenerResult {
 /**
  * Full Market Screener — Nasdaq public stock CSV (no API key, no auth).
  *
- * Endpoint: api.nasdaq.com/api/screener/stocks?download=true
- * Returns ALL ~8,000 US-listed stocks (NYSE + Nasdaq + AMEX) with:
- *   last price, net change, % change, volume, market cap
+ * Runs independently as a self-contained stream. Emits 'symbols' every 30 s.
+ * The scanner (or any other consumer) subscribes to those events.
  *
- * One HTTP request = full market scan. Filtered client-side against
- * live settings thresholds. Runs every 30 s.
+ * Endpoint: api.nasdaq.com/api/screener/stocks?download=true
+ * Returns ALL ~8,000 US-listed stocks (NYSE + Nasdaq + AMEX).
  */
-export class PolygonScreener {
+export class PolygonScreener extends EventEmitter {
   private intervalHandle: NodeJS.Timeout | null = null;
-  private onResults: ((results: ScreenerResult[]) => void) | null = null;
 
-  start(callback: (results: ScreenerResult[]) => void, intervalMs = 30_000) {
-    this.onResults = callback;
+  start(intervalMs = 30_000) {
     this.poll();
     this.intervalHandle = setInterval(() => this.poll(), intervalMs);
     logger.info('scanner', 'Full market screener started — scanning all 8000+ US stocks every 30 s');
@@ -34,6 +32,7 @@ export class PolygonScreener {
 
   stop() {
     if (this.intervalHandle) clearInterval(this.intervalHandle);
+    this.intervalHandle = null;
     logger.info('scanner', 'Full market screener stopped.');
   }
 
@@ -59,7 +58,7 @@ export class PolygonScreener {
 
       for (const row of rows) {
         const symbol = (row.symbol ?? '').trim();
-        if (!/^[A-Z]{1,5}$/.test(symbol)) continue;  // skip funds, warrants
+        if (!/^[A-Z]{1,5}$/.test(symbol)) continue;
 
         const price     = parsePrice(row.lastsale);
         const changePct = parseFloat(row.pctchange?.replace('%', '') ?? '0');
@@ -68,9 +67,8 @@ export class PolygonScreener {
 
         if (price < s.minPrice || price > s.maxPrice) continue;
         if (changePct < s.minPriceSurgePct) continue;
-        if (volume < 500_000) continue;
+        if (volume < 300_000) continue;
 
-        // Rough float proxy: micro-cap = market cap < $300M
         const floatProxy = marketCap > 0 ? marketCap / price / 1_000_000 : undefined;
         if (floatProxy !== undefined && floatProxy >= s.maxFloatM) continue;
 
@@ -79,7 +77,7 @@ export class PolygonScreener {
           price,
           changePercent: changePct,
           volume,
-          relativeVolume: 1,   // Nasdaq CSV has no avg vol — IBKR will compute live RVOL
+          relativeVolume: 1,
           float: floatProxy,
         });
       }
@@ -97,7 +95,8 @@ export class PolygonScreener {
         logger.info('scanner', 'Full scan: 0 movers match thresholds (market may be closed)');
       }
 
-      this.onResults?.(candidates);
+      // Emit independently — consumers subscribe, agent doesn't drive this
+      this.emit('symbols', candidates);
     } catch (err) {
       logger.warn('scanner', `Full scan failed: ${String(err)}`);
     }
@@ -131,8 +130,8 @@ interface NasdaqResponse {
 
 interface NasdaqRow {
   symbol: string;
-  lastsale: string;    // "$5.23"
-  pctchange: string;   // "+12.50%"
-  volume: string;      // "1,234,567"
-  marketCap: string;   // "45.2M"  "1.2B"
+  lastsale: string;
+  pctchange: string;
+  volume: string;
+  marketCap: string;
 }

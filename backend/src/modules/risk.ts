@@ -74,20 +74,13 @@ export class RiskEngine {
     entryPrice: number,
     catalyst: CatalystScore,
     openPositionCount: number,
-    alert?: ScannerAlert
+    alert?: ScannerAlert,
+    adaptivePositionSizePct?: number  // override from agent adaptive strategy
   ): PositionSizing | null {
     const s = settingsStore.get();
 
     if (this.circuitBreakerTripped) {
       logger.warn('risk', `${symbol} rejected — circuit breaker is active.`);
-      return null;
-    }
-    if (openPositionCount >= s.maxOpenPositions) {
-      logger.warn('risk', `${symbol} rejected — max open positions (${s.maxOpenPositions}) reached.`);
-      return null;
-    }
-    if (catalyst.score < s.minCatalystScore) {
-      logger.warn('risk', `${symbol} rejected — catalyst score ${catalyst.score}/100 below threshold (${s.minCatalystScore}).`);
       return null;
     }
 
@@ -97,10 +90,12 @@ export class RiskEngine {
 
     const stopLossPrice = actualEntry * (1 - s.stopLossPct / 100);
 
-    // ── Position sizing: deploy maxPositionSizePct of portfolio ──────────────
+    // ── Position sizing: deploy positionSizePct of portfolio ─────────────────
+    // Adaptive override takes priority over settings value
+    const targetSizePct = adaptivePositionSizePct ?? s.maxPositionSizePct;
     // Scale down on low-confidence setups (floor 70% of target)
     const confidenceScale = Math.max(0.7, Math.min(catalyst.confidence, 1.0));
-    const deployPct = s.maxPositionSizePct * confidenceScale;
+    const deployPct = targetSizePct * confidenceScale;
     let positionValue = this.accountLiquidity * (deployPct / 100);
 
     // Cap to available cash — never deploy money we don't have

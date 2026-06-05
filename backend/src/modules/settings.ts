@@ -21,20 +21,23 @@ export interface AppSettings {
 }
 
 const DEFAULTS: AppSettings = {
-  maxRiskPerTradePct: 2,
-  maxPositionSizePct: 75,
-  stopLossPct: 7,
-  minTakeProfitPct: 25,
-  commissionPerSide: 5,
-  minNetProfitDollar: 20,
-  maxOpenPositions: 5,
-  maxDailyLossPct: 6,
-  minPrice: 1,
-  maxPrice: 10,
-  minRelativeVolume: 3,
-  maxFloatM: 20,
-  minPriceSurgePct: 5,
-  minCatalystScore: 30,
+  // Risk — tuned for penny stock day-trading with limited capital ($100–$500)
+  maxRiskPerTradePct: 3,        // allow up to 3% account risk per trade
+  maxPositionSizePct: 90,       // deploy up to 90% of cash — concentrate when capital is scarce
+  stopLossPct: 7,               // 7% hard stop — penny stocks need room to breathe
+  minTakeProfitPct: 20,         // 20% minimum TP — low enough to actually get hit
+  commissionPerSide: 5,         // $5 IBKR fixed per leg
+  minNetProfitDollar: 10,       // $10 minimum net profit — low bar for small accounts
+  maxOpenPositions: 3,          // adaptive logic in agent will lower this with limited cash
+  maxDailyLossPct: 8,           // 8% daily loss limit before circuit breaker
+  // Scanner — wider net for penny stock universe
+  minPrice: 0.5,                // catch sub-$1 plays
+  maxPrice: 20,                 // allow up to $20 for higher-priced movers
+  minRelativeVolume: 2,         // 2× avg vol minimum — lower than 3× to catch early moves
+  maxFloatM: 50,                // up to 50M float — wider than 20M default
+  minPriceSurgePct: 3,          // 3% surge minimum — catch earlier in the move
+  // Research
+  minCatalystScore: 25,         // 25/100 — pure momentum plays qualify
 };
 
 /** In-memory settings store. Emits 'change' when updated. */
