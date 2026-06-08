@@ -229,6 +229,12 @@ export class MarketScanner extends EventEmitter {
       });
   }
 
+  /** Freshest live IBKR tick price for a symbol — more current than the alert's snapshot price. */
+  getLastPrice(symbol: string): number | undefined {
+    const state = this.tickState.get(symbol);
+    return state && state.lastPrice > 0 ? state.lastPrice : undefined;
+  }
+
   private onLastPrice(symbol: string, price: number) {
     const state = this.tickState.get(symbol);
     if (!state) return;

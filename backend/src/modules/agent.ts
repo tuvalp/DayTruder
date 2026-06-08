@@ -61,6 +61,7 @@ export class AlphaAgent extends EventEmitter {
     });
 
     this.ib.on(EventName.error, (_err, code, reqId) => {
+      const errMsg = (_err as { message?: string } | string | undefined) && typeof _err === 'object' ? (_err as { message?: string }).message : String(_err ?? '');
       // Informational / transient codes — suppress
       if ([162, 300, 365, 2104, 2106, 2158, 2119, 10089, 10147, 10167, 10168,
            104,  // can't modify a filled order — harmless after partial sells
@@ -76,13 +77,13 @@ export class AlphaAgent extends EventEmitter {
       if ((code as unknown as number) === 201 || (code as unknown as number) === 202) {
         const sym = this.execution.handleOrderCancelled(reqId as number);
         if (sym) {
-          logger.warn('execution', `${sym} entry order cancelled by IBKR (202) — resetting to watching`);
+          logger.warn('execution', `${sym} entry order cancelled by IBKR (${code}) — ${errMsg || 'no reason given'} — resetting to watching`);
           this.scanner.setStrategy(sym, 'watching');
           this.setState(this.execution.getOpenPositions().filter((p) => p.status === 'open').length > 0 ? 'monitoring' : 'scanning');
         }
         return;
       }
-      logger.error('system', `IBKR error code ${code} (reqId ${reqId})`);
+      logger.error('system', `IBKR error code ${code} (reqId ${reqId})${errMsg ? ` — ${errMsg}` : ''}`);
     });
   }
 
@@ -247,8 +248,15 @@ export class AlphaAgent extends EventEmitter {
 
     this.setState('executing');
     this.scanner.setStrategy(alert.symbol, 'sizing');
+    // Research can take several seconds — re-anchor to the freshest live IBKR tick so the
+    // bracket's limit/SL/TP aren't built off a stale alert snapshot (causes IBKR to auto-cancel
+    // the order as "price out of range", as seen repeatedly with fast-moving NPT).
+    const freshPrice = this.scanner.getLastPrice(alert.symbol) ?? alert.price;
+    if (Math.abs(freshPrice - alert.price) / alert.price > 0.02) {
+      logger.info('execution', `${alert.symbol} price moved since alert: $${alert.price.toFixed(2)} → $${freshPrice.toFixed(2)} — re-anchoring entry`);
+    }
     // Pass adaptive position size % to risk engine for this trade
-    const sizing = this.risk.size(alert.symbol, alert.price, catalyst, openCount, alert, adaptive.positionSizePct);
+    const sizing = this.risk.size(alert.symbol, freshPrice, catalyst, openCount, alert, adaptive.positionSizePct);
     if (!sizing) {
       this.scanner.setStrategy(alert.symbol, 'rejected');
       this.setState('monitoring'); return;
