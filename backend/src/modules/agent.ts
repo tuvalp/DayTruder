@@ -279,26 +279,33 @@ export class AlphaAgent extends EventEmitter {
         this.setState('monitoring');
       };
 
-      // 30 s: chase unfilled entry — bump limit price 1.5% toward market
+      // Faster timers for fast-moving alerts — a stock surging 5%+/min outruns a slow chase
+      const fastMover = Math.abs(alert.priceChangePct) >= 5;
+      const chaseDelayMs  = fastMover ? 15_000 : 30_000;
+      const cancelDelayMs = fastMover ? 35_000 : 60_000;
+      // Bump scales with momentum: at least 1.5%, more for fast movers (half their 1-min move)
+      const chaseBumpPct = Math.max(0.015, Math.abs(alert.priceChangePct) / 100 / 2);
+
+      // Chase unfilled entry — bump limit price toward market, scaled to momentum
       chaseTimer = setTimeout(() => {
         const stillPending = this.execution.getOpenPositions()
           .find((p) => p.symbol === alert.symbol && p.status === 'pending');
         if (!stillPending) return;
-        const newLimit = parseFloat((sizing.entryPrice * 1.015).toFixed(2));
-        logger.warn('execution', `${alert.symbol} entry not filled after 30 s — chasing @ $${newLimit}`);
+        const newLimit = parseFloat((sizing.entryPrice * (1 + chaseBumpPct)).toFixed(2));
+        logger.warn('execution', `${alert.symbol} entry not filled after ${chaseDelayMs / 1000}s — chasing @ $${newLimit} (+${(chaseBumpPct * 100).toFixed(1)}%)`);
         this.execution.chaseEntryOrder(alert.symbol, newLimit);
-      }, 30_000);
+      }, chaseDelayMs);
 
-      // 60 s: give up — cancel the whole bracket and reset
+      // Give up — cancel the whole bracket and reset
       cancelTimer = setTimeout(() => {
         const stillPending = this.execution.getOpenPositions()
           .find((p) => p.symbol === alert.symbol && p.status === 'pending');
         if (!stillPending) return;
-        logger.warn('execution', `${alert.symbol} entry not filled after 60 s — cancelling`);
+        logger.warn('execution', `${alert.symbol} entry not filled after ${cancelDelayMs / 1000}s — cancelling`);
         this.execution.cancelPendingEntry(alert.symbol);
         this.scanner.setStrategy(alert.symbol, 'watching');
         this.setState(this.execution.getOpenPositions().filter((p) => p.status === 'open').length > 0 ? 'monitoring' : 'scanning');
-      }, 60_000);
+      }, cancelDelayMs);
     }
 
     this.setState(this.execution.getOpenPositions().length > 0 ? 'monitoring' : 'scanning');
@@ -487,9 +494,9 @@ export class AlphaAgent extends EventEmitter {
     if (cash < 400) {
       return {
         maxPositions: 1,
-        minScore: Math.max(s.minCatalystScore, 35),
+        minScore: Math.max(s.minCatalystScore, 30),
         positionSizePct: 80,
-        logReason: `limited cash $${cash.toFixed(0)} — 1 trade, score ≥ 35`,
+        logReason: `limited cash $${cash.toFixed(0)} — 1 trade, score ≥ 30`,
       };
     }
     if (cash < 1000) {
