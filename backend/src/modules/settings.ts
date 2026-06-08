@@ -37,7 +37,7 @@ const DEFAULTS: AppSettings = {
   maxFloatM: 50,                // up to 50M float — wider than 20M default
   minPriceSurgePct: 3,          // 3% surge minimum — catch earlier in the move
   // Research
-  minCatalystScore: 25,         // 25/100 — pure momentum plays qualify
+  minCatalystScore: 28,         // 28/100 — pure momentum plays qualify
 };
 
 /** In-memory settings store. Emits 'change' when updated. */

@@ -30,7 +30,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   minRelativeVolume: 2,
   maxFloatM: 50,
   minPriceSurgePct: 3,
-  minCatalystScore: 25,
+  minCatalystScore: 28,
 };
 
 export function useSocket() {
