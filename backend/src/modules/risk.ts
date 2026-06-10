@@ -8,6 +8,17 @@ export class RiskEngine {
   private availableCash = 0;
   private dailyRealizedPnl = 0;
   private circuitBreakerTripped = false;
+  private lastTooSmallLogTs = 0;
+
+  /**
+   * Profit floor scaled to account size: a $10 minimum makes sense at $300+,
+   * but at $60 it rejects every possible trade. Scale down linearly below
+   * $300 with a $3 floor so tiny accounts can still take valid setups.
+   */
+  private effectiveMinNetProfit(minNetProfitDollar: number): number {
+    if (this.accountLiquidity >= 300) return minNetProfitDollar;
+    return Math.max(3, minNetProfitDollar * (this.accountLiquidity / 300));
+  }
 
   constructor(accountLiquidity: number) {
     this.accountLiquidity = accountLiquidity;
@@ -48,13 +59,25 @@ export class RiskEngine {
     const s = settingsStore.get();
     const entryPrice = alert.suggestedEntry ?? alert.price;
     const totalCommission = s.commissionPerSide * 2;  // buy + sell
+    const minNetProfit = this.effectiveMinNetProfit(s.minNetProfitDollar);
+
+    // Account too small to ever clear commission + profit floor at full deployment?
+    // Log once every 10 min instead of rejecting noisily on every alert.
+    const minViableCash = (minNetProfit + totalCommission) / (s.minTakeProfitPct / 100);
+    if (this.accountLiquidity * (s.maxPositionSizePct / 100) < minViableCash) {
+      if (Date.now() - this.lastTooSmallLogTs > 10 * 60_000) {
+        this.lastTooSmallLogTs = Date.now();
+        logger.error('risk', `🔴 Account too small to trade profitably: need ~$${Math.ceil(minViableCash / (s.maxPositionSizePct / 100))} liquidity to clear $${totalCommission} commission + $${minNetProfit.toFixed(0)} profit floor at ${s.minTakeProfitPct}% TP. Pausing entry attempts.`);
+      }
+      return 'Account below minimum tradeable size';
+    }
 
     // Minimum shares needed so commission isn't a dominant cost (< 20% of profit)
     // grossProfit = shares × entryPrice × (minTakeProfitPct/100)
-    // netProfit = grossProfit - totalCommission ≥ minNetProfitDollar
-    // → shares ≥ (minNetProfitDollar + totalCommission) / (entryPrice × takeProfitPct/100)
+    // netProfit = grossProfit - totalCommission ≥ minNetProfit
+    // → shares ≥ (minNetProfit + totalCommission) / (entryPrice × takeProfitPct/100)
     const minSharesForMargin = Math.ceil(
-      (s.minNetProfitDollar + totalCommission) / (entryPrice * (s.minTakeProfitPct / 100))
+      (minNetProfit + totalCommission) / (entryPrice * (s.minTakeProfitPct / 100))
     );
 
     // How many shares will actually be bought (portfolio-pct sizing)
@@ -63,7 +86,7 @@ export class RiskEngine {
     if (maxShares < minSharesForMargin) {
       const grossAtMax = maxShares * entryPrice * (s.minTakeProfitPct / 100);
       const netAtMax = grossAtMax - totalCommission;
-      return `Profit margin too thin: max ${maxShares} shares yields $${netAtMax.toFixed(0)} net at ${s.minTakeProfitPct}% TP (need $${s.minNetProfitDollar}+)`;
+      return `Profit margin too thin: max ${maxShares} shares yields $${netAtMax.toFixed(0)} net at ${s.minTakeProfitPct}% TP (need $${minNetProfit.toFixed(0)}+)`;
     }
 
     return null;  // trade passes margin check
@@ -114,11 +137,12 @@ export class RiskEngine {
     const dollarRisk = shares * (actualEntry - stopLossPrice);
 
     // Ensure position is large enough to profit after commissions
+    const minNetProfit = this.effectiveMinNetProfit(s.minNetProfitDollar);
     const minSharesForMargin = Math.ceil(
-      (s.minNetProfitDollar + totalCommission) / (actualEntry * (s.minTakeProfitPct / 100))
+      (minNetProfit + totalCommission) / (actualEntry * (s.minTakeProfitPct / 100))
     );
     if (shares < minSharesForMargin) {
-      logger.warn('risk', `${symbol} rejected — ${shares} shares not enough to cover $${totalCommission} commission + $${s.minNetProfitDollar} profit target at ${s.minTakeProfitPct}% TP.`);
+      logger.warn('risk', `${symbol} rejected — ${shares} shares not enough to cover $${totalCommission} commission + $${minNetProfit.toFixed(0)} profit target at ${s.minTakeProfitPct}% TP.`);
       return null;
     }
 

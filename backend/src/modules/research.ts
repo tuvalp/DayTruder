@@ -45,6 +45,10 @@ export class ResearchAgent {
   private readonly cacheTtl = 10 * 60_000;
   // Deduplicates concurrent calls for the same symbol — all callers await the same Promise
   private inFlight = new Map<string, Promise<CatalystScore>>();
+  // When the Anthropic account is out of credits, stop hammering the API and
+  // fall back to momentum-only scoring until this timestamp
+  private apiBackoffUntil = 0;
+  private readonly creditBackoffMs = 15 * 60_000;
 
   async analyze(alert: ScannerAlert, newsHeadlines: string[] = []): Promise<CatalystScore> {
     const cacheKey = `${alert.symbol}:${Math.floor(alert.timestamp / 60_000)}`;
@@ -69,15 +73,31 @@ export class ResearchAgent {
   }
 
   private async _doAnalyze(alert: ScannerAlert, newsHeadlines: string[], cacheKey: string): Promise<CatalystScore> {
+    if (Date.now() < this.apiBackoffUntil) {
+      return this.momentumFallback(alert, cacheKey);
+    }
+
     logger.info('research', `Analyzing catalyst for ${alert.symbol} @ $${alert.price.toFixed(2)}…`);
     const userContent = this.buildPrompt(alert, newsHeadlines);
 
-    const message = await client.messages.create({
-      model: config.CLAUDE_MODEL,
-      max_tokens: 512,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userContent }],
-    });
+    let message;
+    try {
+      message = await client.messages.create({
+        model: config.CLAUDE_MODEL,
+        max_tokens: 512,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userContent }],
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/credit balance/i.test(msg)) {
+        this.apiBackoffUntil = Date.now() + this.creditBackoffMs;
+        logger.error('research', `🔴 Anthropic API out of credits — falling back to momentum-only scoring for ${this.creditBackoffMs / 60_000} min. Add credits at console.anthropic.com → Plans & Billing.`);
+      } else {
+        logger.error('research', `Claude API error for ${alert.symbol}: ${msg} — using momentum fallback`);
+      }
+      return this.momentumFallback(alert, cacheKey);
+    }
 
     const rawText = message.content
       .filter((b) => b.type === 'text')
@@ -115,6 +135,30 @@ export class ResearchAgent {
       { result }
     );
 
+    this.cache.set(cacheKey, { score: result, expiry: Date.now() + this.cacheTtl });
+    return result;
+  }
+
+  /**
+   * Momentum-only score used when the Claude API is unavailable.
+   * Mirrors the bottom rungs of the LLM scoring guide: a genuine low-float
+   * high-RVOL surge still qualifies as a tradeable setup without news.
+   */
+  private momentumFallback(alert: ScannerAlert, cacheKey: string): CatalystScore {
+    const strongMomentum = alert.relativeVolume >= 3 && alert.priceChangePct >= 5;
+    const moderateMomentum = alert.relativeVolume >= 2 && alert.priceChangePct >= 3;
+    const score = strongMomentum ? 35 : moderateMomentum ? 28 : 15;
+    const result: CatalystScore = {
+      symbol: alert.symbol,
+      analyzedAt: Date.now(),
+      score,
+      sentiment: score >= 28 ? 'bullish' : 'neutral',
+      catalystType: 'Momentum Fallback (AI unavailable)',
+      headline: 'Scored from price/volume only — Claude API unavailable',
+      reasoning: `RVOL ${alert.relativeVolume.toFixed(1)}×, surge +${alert.priceChangePct.toFixed(1)}%, float ${alert.float.toFixed(1)}M. No news/catalyst verification possible.`,
+      confidence: 0.5,
+    };
+    logger.warn('research', `${alert.symbol} momentum-fallback score: ${score}/100 (AI unavailable)`);
     this.cache.set(cacheKey, { score: result, expiry: Date.now() + this.cacheTtl });
     return result;
   }

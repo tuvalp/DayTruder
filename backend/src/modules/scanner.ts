@@ -44,6 +44,9 @@ export class MarketScanner extends EventEmitter {
   private alertCooldown = new Map<string, number>();
   private symbolLastSeen = new Map<string, number>();
   private nextReqId = 100;
+  // IBKR caps concurrent market-data lines (typically 100) — stay safely under
+  // it or new movers get error 101 and become invisible to the scanner
+  private static readonly MAX_SUBSCRIPTIONS = 95;
   private running = false;
   private watchlistThrottle: NodeJS.Timeout | null = null;
 
@@ -94,6 +97,9 @@ export class MarketScanner extends EventEmitter {
     for (const { symbol, float, price } of symbols) {
       this.symbolLastSeen.set(symbol, now);
       if (!this.symbolToReqId.has(symbol)) {
+        if (this.symbolToReqId.size >= MarketScanner.MAX_SUBSCRIPTIONS && !this.evictLowestPriority()) {
+          continue; // at cap and nothing evictable — skip this symbol
+        }
         this.subscribe(symbol, float, price);
       } else {
         // Symbol already subscribed — feed fresh screener price as a tick so
@@ -119,6 +125,26 @@ export class MarketScanner extends EventEmitter {
       `Watchlist: ${this.symbolToReqId.size} active symbols | +${symbols.length} from screener`
     );
     this.emitWatchlist();
+  }
+
+  /**
+   * Free a market-data line by dropping the least interesting symbol:
+   * the 'watching' symbol with the smallest session move. Positioned or
+   * in-pipeline symbols are never evicted. Returns false if nothing evictable.
+   */
+  private evictLowestPriority(): boolean {
+    let worst: string | null = null;
+    let worstMove = Infinity;
+    for (const [symbol, state] of this.tickState.entries()) {
+      if (state.strategy !== 'watching') continue;
+      const move = state.openPrice > 0
+        ? Math.abs((state.lastPrice - state.openPrice) / state.openPrice)
+        : 0;
+      if (move < worstMove) { worstMove = move; worst = symbol; }
+    }
+    if (!worst) return false;
+    this.unsubscribe(worst);
+    return true;
   }
 
   /** Called by the agent when IBKR returns error 200 for a reqId — drop that symbol. */
