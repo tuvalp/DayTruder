@@ -48,6 +48,7 @@ export class MarketScanner extends EventEmitter {
   // it or new movers get error 101 and become invisible to the scanner
   private static readonly MAX_SUBSCRIPTIONS = 95;
   private running = false;
+  private handlersAttached = false;
   private watchlistThrottle: NodeJS.Timeout | null = null;
 
   constructor(ib: IBApi, screener: PolygonScreener) {
@@ -61,7 +62,10 @@ export class MarketScanner extends EventEmitter {
     this.running = true;
     // 4 = real-time if subscribed, delayed otherwise — suppresses error 10089
     this.ib.reqMarketDataType(4);
-    this.attachTickHandlers();
+    if (!this.handlersAttached) {
+      this.attachTickHandlers();
+      this.handlersAttached = true;
+    }
 
     // Wire screener stream directly into scanner — no agent callback needed
     this.screener.on('symbols', (results: ScreenerResult[]) => {

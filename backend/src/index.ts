@@ -95,9 +95,9 @@ io.on('connection', (socket) => {
 // ── Boot ──────────────────────────────────────────────────────────────────────
 httpServer.listen(config.PORT, () => {
   logger.info('system', `AlphaAgent backend listening on port ${config.PORT}`);
-  if (config.NODE_ENV === 'production') {
-    agent.start().catch((e) => logger.error('system', `Auto-start failed: ${e}`));
-  }
+  // Always connect to IBKR + start background sync; the schedule loop decides
+  // when to actually start scanning/trading (within 10 min of market open).
+  agent.connectInfra().catch((e) => logger.error('system', `connectInfra failed: ${e}`));
 });
 
 process.on('SIGTERM', () => { agent.pause(); httpServer.close(() => process.exit(0)); });

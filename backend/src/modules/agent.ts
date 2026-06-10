@@ -3,7 +3,7 @@ import { IBApi, EventName } from '@stoqey/ib';
 import { MarketScanner } from './scanner';
 import { PolygonScreener } from './screener';
 import { ResearchAgent } from './research';
-import { isMarketOpen, getMarketStatus } from '../utils/marketHours';
+import { isMarketOpen, getMarketStatus, minutesUntilOpen } from '../utils/marketHours';
 import { RiskEngine } from './risk';
 import { ExecutionModule } from './execution';
 import { config } from '../config';
@@ -34,6 +34,14 @@ export class AlphaAgent extends EventEmitter {
   private startingLiquidity = 0;
   private cachedLiquidity = 0;
   private ibConnected = false;
+  // Infra (IBKR connection, screener wiring, sync loops) is connected once at boot
+  private infraReady = false;
+  // Trading session (scanner running, alerts producing entries) toggles on schedule
+  private tradingActive = false;
+  // Set when the user manually pauses — the schedule loop won't override it
+  private manuallyPaused = false;
+  private scheduleInterval: NodeJS.Timeout | null = null;
+  private readonly minAvailableCash = 50;
 
   constructor() {
     super();
@@ -87,9 +95,17 @@ export class AlphaAgent extends EventEmitter {
     });
   }
 
-  async start() {
-    logger.info('system', '🚀 AlphaAgent initializing…');
-    this.setState('scanning');
+  /**
+   * Connects to IBKR and starts background services (position sync, P&L
+   * stream, market-status broadcast, the schedule loop). Safe to call once
+   * at process boot — idempotent. Does NOT start the scanner/screener or
+   * enable new entries; that's gated by the schedule (see evaluateSchedule).
+   */
+  async connectInfra() {
+    if (this.infraReady) return;
+    this.infraReady = true;
+
+    logger.info('system', '🚀 AlphaAgent connecting to IBKR…');
 
     if (!this.ibConnected) {
       this.connectIB();
@@ -117,32 +133,85 @@ export class AlphaAgent extends EventEmitter {
 
     this.scanner.on('alert', (alert: ScannerAlert) => this.handleAlert(alert));
     this.scanner.on('watchlist', (entries) => this.emit('watchlist', entries));
-    // scanner.start() also starts the screener and wires the symbol stream internally
-    this.scanner.start();
-
-    const status = getMarketStatus();
-    const openMsg = status === 'open'
-      ? '🟢 Market is OPEN — entries enabled'
-      : `🔴 Market is ${status.toUpperCase()} — entries will be blocked until 9:30 AM ET`;
-    logger.info('system', openMsg);
 
     // Emit market status every minute
-    setInterval(() => {
-      const s = getMarketStatus();
-      this.emit('marketStatus', s);
-    }, 60_000);
+    const status = getMarketStatus();
     this.emit('marketStatus', status);
+    setInterval(() => this.emit('marketStatus', getMarketStatus()), 60_000);
 
     this.syncInterval = setInterval(() => this.syncAndEmit(), 5000);
     setInterval(() => this.manageOpenPositions(), 5000);
-    logger.success('system', '✅ AlphaAgent is LIVE and scanning the market.');
+
+    this.setState(this.execution.getOpenPositions().filter((p) => p.status === 'open').length > 0 ? 'monitoring' : 'idle');
+    logger.success('system', '✅ Connected to IBKR — open positions are being monitored.');
+
+    // Schedule loop decides when to start/stop the trading session
+    this.scheduleInterval = setInterval(() => this.evaluateSchedule(), 30_000);
+    this.evaluateSchedule();
+  }
+
+  /**
+   * Starts the scanner/screener and enables new entries. Called by the
+   * schedule loop within 10 min of market open, or immediately by a manual
+   * "Start" from the UI.
+   */
+  private startTrading() {
+    if (this.tradingActive) return;
+    this.tradingActive = true;
+    // scanner.start() also starts the screener and wires the symbol stream internally
+    this.scanner.start();
+    this.setState(this.execution.getOpenPositions().filter((p) => p.status === 'open').length > 0 ? 'monitoring' : 'scanning');
+    logger.success('system', '▶️  Trading session started — scanning for entries.');
+  }
+
+  /** Stops the scanner/screener (no new entries). Open positions keep being monitored. */
+  private stopTrading(reason: string) {
+    if (!this.tradingActive) return;
+    this.tradingActive = false;
+    this.scanner.stop();
+    const hasOpenPositions = this.execution.getOpenPositions().filter((p) => p.status === 'open').length > 0;
+    this.setState(hasOpenPositions ? 'monitoring' : 'idle');
+    logger.warn('system', `⏸️  Trading session stopped — ${reason}.`);
+  }
+
+  /**
+   * Runs every 30 s. Starts the trading session within 10 min of market
+   * open and keeps it running while the market is open and there's enough
+   * cash to open a new position; otherwise stops it (existing positions
+   * are still managed regardless).
+   */
+  private evaluateSchedule() {
+    if (this.manuallyPaused) return;
+
+    const status = getMarketStatus();
+    const mins = minutesUntilOpen();
+    const withinTradingWindow = status === 'open' || (mins >= 0 && mins <= 10);
+
+    const availableCash = this.execution.getAvailableCash();
+    // Treat 0/unknown as "ok" — don't block startup before the first cash sync
+    const hasCash = availableCash <= 0 || availableCash >= this.minAvailableCash;
+
+    if (withinTradingWindow && hasCash) {
+      this.startTrading();
+    } else if (this.tradingActive) {
+      const reason = !withinTradingWindow
+        ? `market is ${status}`
+        : `available cash $${availableCash.toFixed(0)} too low to open new positions`;
+      this.stopTrading(reason);
+    }
+  }
+
+  /** Manual start from the UI — connects infra if needed and starts trading immediately. */
+  async start() {
+    this.manuallyPaused = false;
+    if (!this.infraReady) await this.connectInfra();
+    this.startTrading();
   }
 
   pause() {
+    this.manuallyPaused = true;
+    this.stopTrading('manually paused');
     this.setState('paused');
-    this.scanner.stop();
-    this.screener.stop();
-    if (this.syncInterval) clearInterval(this.syncInterval);
     logger.warn('system', '⏸  AlphaAgent paused — no new entries.');
   }
 
