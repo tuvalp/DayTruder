@@ -379,7 +379,9 @@ export class AlphaAgent extends EventEmitter {
    *
    * For each open position:
    *   1. Track session high
-   *   2. Early breakeven: once up half a stop-loss %, move stop to entry → zero risk
+   *   2. Early de-risk: once up half a stop-loss %, move stop to halfway between
+   *      original stop and entry — cuts risk without choking off normal pullbacks
+   *   2b. Full breakeven: once up a full stop-loss %, move stop to entry
    *   3. TP1 hit → sell 50%, stop → breakeven (if not already)
    *   4. TP2 hit → sell 25% more, stop → TP1 (locked profit floor)
    *   5. Post-TP1 trailing: trail 5% below session high once any TP hit
@@ -410,10 +412,21 @@ export class AlphaAgent extends EventEmitter {
         ? ((price - pos.sessionHigh) / pos.sessionHigh) * 100
         : 0;
 
-      // ── Early breakeven: half a stop above entry → stop to entry price ───────
-      // Eliminates downside risk as soon as there's a small cushion
+      // ── Early de-risk: half a stop above entry → stop to halfway-to-breakeven ─
+      // Cuts risk in half but still leaves room for normal post-spike pullbacks
+      // (penny stocks routinely wick 3-5% right after a pop — moving straight to
+      // breakeven here gets shaken out before the real move happens)
       const breakEvenTriggerPct = s.stopLossPct / 2;
-      if (!pos.tp1Hit && pctFromEntry >= breakEvenTriggerPct && pos.stopLoss < pos.avgPrice) {
+      const originalStop = pos.avgPrice * (1 - s.stopLossPct / 100);
+      const halfRiskStop = parseFloat(((originalStop + pos.avgPrice) / 2).toFixed(2));
+      if (!pos.tp1Hit && pctFromEntry >= breakEvenTriggerPct && pctFromEntry < s.stopLossPct && pos.stopLoss < halfRiskStop) {
+        this.execution.adjustStop(pos.symbol, halfRiskStop);
+        logger.trade('system', `🔒 ${pos.symbol} stop → reduced risk $${halfRiskStop.toFixed(2)} (up ${pctFromEntry.toFixed(1)}%)`);
+        changed = true;
+      }
+
+      // ── Full breakeven: a full stop-loss % above entry → stop to entry price ──
+      if (!pos.tp1Hit && pctFromEntry >= s.stopLossPct && pos.stopLoss < pos.avgPrice) {
         this.execution.adjustStop(pos.symbol, pos.avgPrice);
         logger.trade('system', `🔒 ${pos.symbol} stop → breakeven $${pos.avgPrice.toFixed(2)} (up ${pctFromEntry.toFixed(1)}%)`);
         changed = true;
