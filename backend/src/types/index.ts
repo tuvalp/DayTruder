@@ -106,6 +106,7 @@ export interface Position {
   sessionHigh?: number;      // highest price seen since entry — for trailing/reversal
   tp1Hit?: boolean;
   tp2Hit?: boolean;
+  lastTierHit?: number;      // highest profit-ladder tier (%) processed so far
   slOrderId?: number;        // IBKR orderId of the live stop order — for modification
   tp1OrderId?: number;
   tp2OrderId?: number;
