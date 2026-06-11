@@ -452,15 +452,14 @@ export class AlphaAgent extends EventEmitter {
    *
    * For each open position:
    *   1. Track session high
-   *   2. Early de-risk: once up half a stop-loss %, move stop to halfway between
-   *      original stop and entry — cuts risk without choking off normal pullbacks
-   *   2b. Full breakeven: once up a full stop-loss %, move stop to entry
-   *   3. Profit ladder: every 5% gain starting at +10%, re-check vs session
-   *      high — if stalling (pulled back ≥3% from high), sell half and lock
-   *      the stop at the previous tier; if still running, just raise the
-   *      stop to lock the previous tier and let it ride
-   *   4. Reversal exit: up > half-stop% and pulls back 6%+ from high before
+   *   2. Profit ladder: every 5% gain starting at +10%, re-check vs session
+   *      high — if stalling (pulled back ≥3% from high), sell half;
+   *      otherwise hold and let it run
+   *   3. Reversal exit: up > half-stop% and pulls back 6%+ from high before
    *      any ladder tier has been hit
+   *
+   * The stop-loss order placed at entry is never modified — it stays at
+   * its initial price for the life of the position.
    */
   private manageOpenPositions() {
     const s = settingsStore.get();
@@ -484,29 +483,9 @@ export class AlphaAgent extends EventEmitter {
         ? ((price - pos.sessionHigh) / pos.sessionHigh) * 100
         : 0;
 
-      // ── Early de-risk: half a stop above entry → stop to halfway-to-breakeven ─
-      // Cuts risk in half but still leaves room for normal post-spike pullbacks
-      // (penny stocks routinely wick 3-5% right after a pop — moving straight to
-      // breakeven here gets shaken out before the real move happens)
-      const breakEvenTriggerPct = s.stopLossPct / 2;
-      const originalStop = pos.avgPrice * (1 - s.stopLossPct / 100);
-      const halfRiskStop = parseFloat(((originalStop + pos.avgPrice) / 2).toFixed(2));
-      if (!pos.tp1Hit && pctFromEntry >= breakEvenTriggerPct && pctFromEntry < s.stopLossPct && pos.stopLoss < halfRiskStop) {
-        this.execution.adjustStop(pos.symbol, halfRiskStop);
-        logger.trade('system', `🔒 ${pos.symbol} stop → reduced risk $${halfRiskStop.toFixed(2)} (up ${pctFromEntry.toFixed(1)}%)`);
-        changed = true;
-      }
-
-      // ── Full breakeven: a full stop-loss % above entry → stop to entry price ──
-      if (!pos.tp1Hit && pctFromEntry >= s.stopLossPct && pos.stopLoss < pos.avgPrice) {
-        this.execution.adjustStop(pos.symbol, pos.avgPrice);
-        logger.trade('system', `🔒 ${pos.symbol} stop → breakeven $${pos.avgPrice.toFixed(2)} (up ${pctFromEntry.toFixed(1)}%)`);
-        changed = true;
-      }
-
-      // ── Profit ladder: every 5% from +10%, decide sell-half / raise-stop / hold ─
-      // Re-evaluated every 5s against the session high, so a stalling move
-      // locks in gains while a still-running move just gets a higher floor.
+      // ── Profit ladder: every 5% from +10%, sell-half-if-stalling or hold ─────
+      // Re-evaluated every 5s against the session high. Does NOT touch the
+      // stop-loss order — that stays at its initial entry-time price.
       const TIER_STEP = 5;
       const FIRST_TIER = 10;
       if (pctFromEntry >= FIRST_TIER) {
@@ -514,24 +493,21 @@ export class AlphaAgent extends EventEmitter {
         const lastTier = pos.lastTierHit ?? 0;
         if (tier > lastTier) {
           pos.lastTierHit = tier;
-          const lockPct = tier - TIER_STEP; // lock in the previous tier's gain
-          const lockStop = parseFloat((pos.avgPrice * (1 + lockPct / 100)).toFixed(2));
           const stalling = pctFromHigh <= -3; // pulled back ≥3% from session high
 
           if (stalling && pos.shares > 1) {
             const sellQty = Math.max(1, Math.floor(pos.shares / 2));
             this.execution.partialSell(pos.symbol, sellQty, `+${tier}% tier, stalling (${pctFromHigh.toFixed(1)}% off high) — locking gains`);
-            logger.trade('system', `📈 ${pos.symbol} +${tier}% tier — stalling, sold ${sellQty} sh, stop → lock +${lockPct}% ($${lockStop.toFixed(2)})`);
+            logger.trade('system', `📈 ${pos.symbol} +${tier}% tier — stalling, sold ${sellQty} sh`);
           } else {
-            logger.trade('system', `↗ ${pos.symbol} +${tier}% tier — still running, stop → lock +${lockPct}% ($${lockStop.toFixed(2)})`);
+            logger.trade('system', `↗ ${pos.symbol} +${tier}% tier — still running, holding`);
           }
-
-          if (lockStop > pos.stopLoss) this.execution.adjustStop(pos.symbol, lockStop);
           changed = true;
         }
       }
 
       // ── Reversal exit: profitable position pulls back hard before any tier ──
+      const breakEvenTriggerPct = s.stopLossPct / 2;
       if (
         pos.sessionHigh &&
         pctFromEntry > breakEvenTriggerPct &&
