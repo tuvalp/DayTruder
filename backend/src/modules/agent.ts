@@ -180,24 +180,28 @@ export class AlphaAgent extends EventEmitter {
    * cash to open a new position; otherwise stops it (existing positions
    * are still managed regardless).
    */
+  /**
+   * Runs every 30 s. Starts the trading session within 10 min of market
+   * open. Once running, it stays running through after-hours/closed —
+   * the scanner keeps watching and the market-hours gate in _handleAlert
+   * already skips research/entries while the market is closed. The only
+   * thing that stops a running session is running out of available cash.
+   */
   private evaluateSchedule() {
     if (this.manuallyPaused) return;
 
     const status = getMarketStatus();
     const mins = minutesUntilOpen();
-    const withinTradingWindow = status === 'open' || (mins >= 0 && mins <= 10);
+    const withinStartWindow = status === 'open' || (mins >= 0 && mins <= 10);
 
     const availableCash = this.execution.getAvailableCash();
     // Treat 0/unknown as "ok" — don't block startup before the first cash sync
     const hasCash = availableCash <= 0 || availableCash >= this.minAvailableCash;
 
-    if (withinTradingWindow && hasCash) {
+    if (withinStartWindow && hasCash) {
       this.startTrading();
-    } else if (this.tradingActive) {
-      const reason = !withinTradingWindow
-        ? `market is ${status}`
-        : `available cash $${availableCash.toFixed(0)} too low to open new positions`;
-      this.stopTrading(reason);
+    } else if (this.tradingActive && !hasCash) {
+      this.stopTrading(`available cash $${availableCash.toFixed(0)} too low to open new positions`);
     }
   }
 
