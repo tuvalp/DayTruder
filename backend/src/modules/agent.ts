@@ -201,7 +201,12 @@ export class AlphaAgent extends EventEmitter {
     if (withinStartWindow && hasCash) {
       this.startTrading();
     } else if (this.tradingActive && !hasCash) {
-      this.stopTrading(`available cash $${availableCash.toFixed(0)} too low to open new positions`);
+      // Keep scanner running while any position is still open — price ticks are
+      // needed for position management. Only stop once all positions are closed.
+      const hasOpenPositions = this.execution.getOpenPositions().some((p) => p.status === 'open');
+      if (!hasOpenPositions) {
+        this.stopTrading(`available cash $${availableCash.toFixed(0)} too low to open new positions`);
+      }
     }
   }
 
@@ -365,7 +370,9 @@ export class AlphaAgent extends EventEmitter {
       const chaseDelayMs  = fastMover ? 15_000 : 30_000;
       const cancelDelayMs = fastMover ? 35_000 : 60_000;
       // Bump scales with momentum: at least 1.5%, more for fast movers (half their 1-min move)
-      const chaseBumpPct = Math.max(0.015, Math.abs(alert.priceChangePct) / 100 / 2);
+      // Chase bump: scale to momentum but hard-cap at 5% — a +200% pre-market
+      // surge should not produce a +110% chase that re-prices the whole bracket
+      const chaseBumpPct = Math.min(0.05, Math.max(0.015, Math.abs(alert.priceChangePct) / 100 / 2));
 
       // Chase unfilled entry — bump limit price toward market, scaled to momentum
       chaseTimer = setTimeout(() => {
