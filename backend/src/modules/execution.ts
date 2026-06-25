@@ -606,6 +606,25 @@ export class ExecutionModule {
     }
   }
 
+  /**
+   * Cancel the bracket TP limit order for a position. Called after a fill
+   * when the agent wants to manage the exit itself based on live data instead
+   * of relying on a fixed price target set at entry time.
+   */
+  cancelTpOrder(symbol: string): boolean {
+    const pos = this.positions.get(symbol);
+    if (!pos?.tp1OrderId) return false;
+    try {
+      this.ib.cancelOrder(pos.tp1OrderId, '');
+      logger.info('execution', `${symbol}: TP limit order cancelled — agent will manage exit`);
+      pos.tp1OrderId = undefined;
+      return true;
+    } catch (err) {
+      logger.warn('execution', `${symbol}: could not cancel TP order: ${err}`);
+      return false;
+    }
+  }
+
   /** Sell a partial number of shares at market price. */
   partialSell(symbol: string, sharesToSell: number, reason: string): boolean {
     const pos = this.positions.get(symbol);

@@ -360,6 +360,7 @@ export class AlphaAgent extends EventEmitter {
         clearTimeout(chaseTimer);
         clearTimeout(cancelTimer);
         logger.trade('system', `✅ POSITION OPEN: ${symbol} filled @ $${fillPrice.toFixed(2)}`);
+
         // Re-anchor stop-loss to actual fill price — the bracket was sized on the
         // alert price which may differ significantly after a chase or fast move
         const s = settingsStore.get();
@@ -368,6 +369,12 @@ export class AlphaAgent extends EventEmitter {
         if (adjusted) {
           logger.trade('system', `🔒 ${symbol} SL anchored to fill: $${anchoredStop.toFixed(2)} (${s.stopLossPct}% below $${fillPrice.toFixed(2)})`);
         }
+
+        // Cancel the bracket TP limit order — it was priced off the alert price,
+        // not the fill, so it can fire far too early on fast movers. The 5%-ladder
+        // in manageOpenPositions watches live price vs session high every 5 s and
+        // will sell when momentum actually stalls, letting strong moves run further.
+        this.execution.cancelTpOrder(symbol);
         this.scanner.setStrategy(symbol, 'positioned');
         this.emitPositions();
         this.setState('monitoring');
