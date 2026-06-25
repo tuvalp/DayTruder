@@ -3,7 +3,7 @@ import { IBApi, EventName } from '@stoqey/ib';
 import { MarketScanner } from './scanner';
 import { PolygonScreener } from './screener';
 import { ResearchAgent } from './research';
-import { isMarketOpen, getMarketStatus, minutesUntilOpen } from '../utils/marketHours';
+import { isMarketOpen, getMarketStatus, minutesUntilOpen, minutesUntilClose } from '../utils/marketHours';
 import { RiskEngine } from './risk';
 import { ExecutionModule } from './execution';
 import { config } from '../config';
@@ -360,6 +360,14 @@ export class AlphaAgent extends EventEmitter {
         clearTimeout(chaseTimer);
         clearTimeout(cancelTimer);
         logger.trade('system', `✅ POSITION OPEN: ${symbol} filled @ $${fillPrice.toFixed(2)}`);
+        // Re-anchor stop-loss to actual fill price — the bracket was sized on the
+        // alert price which may differ significantly after a chase or fast move
+        const s = settingsStore.get();
+        const anchoredStop = parseFloat((fillPrice * (1 - s.stopLossPct / 100)).toFixed(2));
+        const adjusted = this.execution.adjustStop(symbol, anchoredStop);
+        if (adjusted) {
+          logger.trade('system', `🔒 ${symbol} SL anchored to fill: $${anchoredStop.toFixed(2)} (${s.stopLossPct}% below $${fillPrice.toFixed(2)})`);
+        }
         this.scanner.setStrategy(symbol, 'positioned');
         this.emitPositions();
         this.setState('monitoring');
@@ -472,6 +480,19 @@ export class AlphaAgent extends EventEmitter {
     const s = settingsStore.get();
     const positions = this.execution.getOpenPositions().filter((p) => p.status === 'open');
     if (positions.length === 0) return;
+
+    // ── End-of-day forced close: market-close positions ≤ 5 min before 4:00 PM ET ─
+    const minsLeft = minutesUntilClose();
+    if (minsLeft >= 0 && minsLeft <= 5) {
+      logger.warn('system', `🔔 Market closes in ${minsLeft} min — force-closing all ${positions.length} position(s)`);
+      for (const pos of positions) {
+        this.execution.closePosition(pos.symbol);
+        this.scanner.setStrategy(pos.symbol, 'watching');
+      }
+      this.setState('idle');
+      this.emitPositions();
+      return;
+    }
 
     let changed = false;
 

@@ -37,3 +37,10 @@ export function minutesUntilOpen(): number {
   if (totalMinutes < openMinutes) return openMinutes - totalMinutes;
   return -1;  // past close for today
 }
+
+/** Minutes until regular market close (negative if already closed or weekend). */
+export function minutesUntilClose(): number {
+  const { day, totalMinutes } = etNow();
+  if (day === 0 || day === 6) return -1;
+  return 16 * 60 - totalMinutes;
+}
