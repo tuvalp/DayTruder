@@ -370,11 +370,9 @@ export class AlphaAgent extends EventEmitter {
           logger.trade('system', `🔒 ${symbol} SL anchored to fill: $${anchoredStop.toFixed(2)} (${s.stopLossPct}% below $${fillPrice.toFixed(2)})`);
         }
 
-        // Cancel the bracket TP limit order — it was priced off the alert price,
-        // not the fill, so it can fire far too early on fast movers. The 5%-ladder
-        // in manageOpenPositions watches live price vs session high every 5 s and
-        // will sell when momentum actually stalls, letting strong moves run further.
-        this.execution.cancelTpOrder(symbol);
+        // No TP limit order is ever submitted at the broker — the 5%-ladder in
+        // manageOpenPositions watches live price vs session high every 5 s and
+        // sells when momentum actually stalls, letting strong moves run further.
         this.scanner.setStrategy(symbol, 'positioned');
         this.emitPositions();
         this.setState('monitoring');

@@ -420,6 +420,15 @@ export class ExecutionModule {
   ): Promise<Position | null> {
     const { symbol, shares, entryPrice, stopLoss, takeProfits } = sizing;
 
+    // Hard guard: never open a second position for a symbol that already
+    // has one tracked (open or still pending fill). Without this, a stray
+    // duplicate alert can double up exposure on the same symbol.
+    const existing = this.positions.get(symbol);
+    if (existing && (existing.status === 'open' || existing.status === 'pending')) {
+      logger.warn('execution', `${symbol} already has a ${existing.status} position — refusing duplicate entry`);
+      return null;
+    }
+
     // Always request a fresh ID from IBKR — prevents error 103 (duplicate order ID)
     const parentId = await this.getNextOrderId().catch((err) => {
       logger.error('execution', `Failed to get order ID: ${err}`);
@@ -428,9 +437,8 @@ export class ExecutionModule {
     if (parentId === null) return null;
 
     const slId = parentId + 1;
-    const tpId = parentId + 2;
     // Advance offset so non-bracket orders don't collide until next reqIds
-    this.nextOrderIdOffset = 3;
+    this.nextOrderIdOffset = 2;
 
     const contract: Contract = {
       symbol,
@@ -453,7 +461,11 @@ export class ExecutionModule {
       account: this.account,
     };
 
-    // ── Child 1: Stop SELL (stop-loss) ───────────────────────────────────────
+    // ── Child: Stop SELL (stop-loss) ─────────────────────────────────────────
+    // No take-profit leg: submitting one as a live GTC limit order races
+    // against our own cancelTpOrder() call after fill (the agent manages
+    // exits itself via the profit ladder in manageOpenPositions), so we
+    // just never create one.
     const slOrder: IBOrder = {
       orderId: slId,
       action: OrderAction.SELL,
@@ -462,32 +474,18 @@ export class ExecutionModule {
       auxPrice: parseFloat(stopLoss.toFixed(2)),
       tif: TimeInForce.GTC,
       parentId,
-      transmit: false,
-      account: this.account,
-    };
-
-    // ── Child 2: Limit SELL (first take-profit) ──────────────────────────────
-    const tpOrder: IBOrder = {
-      orderId: tpId,
-      action: OrderAction.SELL,
-      orderType: IBOrderType.LMT,
-      totalQuantity: shares,
-      lmtPrice: parseFloat(takeProfits[0].toFixed(2)),
-      tif: TimeInForce.GTC,
-      parentId,
       transmit: true,           // transmit=true sends the whole bracket
       account: this.account,
     };
 
     logger.trade(
       'execution',
-      `Submitting IBKR bracket: BUY ${shares} ${symbol} @ $${limitPrice} | SL $${stopLoss.toFixed(2)} | TP $${takeProfits[0].toFixed(2)}`
+      `Submitting IBKR bracket: BUY ${shares} ${symbol} @ $${limitPrice} | SL $${stopLoss.toFixed(2)} (TP managed by agent, target ~$${takeProfits[0].toFixed(2)})`
     );
 
     try {
       this.ib.placeOrder(parentId, contract, parentOrder);
       this.ib.placeOrder(slId,     contract, slOrder);
-      this.ib.placeOrder(tpId,     contract, tpOrder);
     } catch (err) {
       logger.error('execution', `placeOrder error: ${String(err)}`);
       return null;
@@ -523,13 +521,12 @@ export class ExecutionModule {
       tp1Hit: false,
       tp2Hit: false,
       slOrderId: slId,
-      tp1OrderId: tpId,
     };
 
     this.positions.set(symbol, position);
     this.entryOrderToSymbol.set(parentId, symbol);
     this.subscribePositionMktData(symbol);
-    logger.success('execution', `Order pending: ${symbol} — waiting for fill (IBKR IDs ${parentId}/${slId}/${tpId})`);
+    logger.success('execution', `Order pending: ${symbol} — waiting for fill (IBKR IDs ${parentId}/${slId})`);
     return position;
   }
 
@@ -602,25 +599,6 @@ export class ExecutionModule {
       return true;
     } catch (err) {
       logger.error('execution', `adjustStop failed for ${symbol}: ${err}`);
-      return false;
-    }
-  }
-
-  /**
-   * Cancel the bracket TP limit order for a position. Called after a fill
-   * when the agent wants to manage the exit itself based on live data instead
-   * of relying on a fixed price target set at entry time.
-   */
-  cancelTpOrder(symbol: string): boolean {
-    const pos = this.positions.get(symbol);
-    if (!pos?.tp1OrderId) return false;
-    try {
-      this.ib.cancelOrder(pos.tp1OrderId, '');
-      logger.info('execution', `${symbol}: TP limit order cancelled — agent will manage exit`);
-      pos.tp1OrderId = undefined;
-      return true;
-    } catch (err) {
-      logger.warn('execution', `${symbol}: could not cancel TP order: ${err}`);
       return false;
     }
   }
